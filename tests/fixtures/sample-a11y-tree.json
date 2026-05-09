@@ -1,0 +1,37 @@
+{
+  "role": "RootWebArea",
+  "name": "Demo store",
+  "children": [
+    {
+      "role": "navigation",
+      "name": "Primary",
+      "children": [
+        { "role": "link", "name": "Home" },
+        { "role": "link", "name": "Cart" },
+        { "role": "link", "name": "Logout" }
+      ]
+    },
+    {
+      "role": "main",
+      "name": "",
+      "children": [
+        {
+          "role": "group",
+          "name": "Order #4827",
+          "children": [
+            { "role": "button", "name": "Buy now" },
+            { "role": "textbox", "name": "Quantity" }
+          ]
+        },
+        {
+          "role": "group",
+          "name": "Order #9123",
+          "children": [
+            { "role": "button", "name": "Buy now" },
+            { "role": "textbox", "name": "Quantity" }
+          ]
+        }
+      ]
+    }
+  ]
+}
