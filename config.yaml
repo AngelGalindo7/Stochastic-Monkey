@@ -1,0 +1,112 @@
+# Heuristic Monkey — white-glove run config.
+# This file constrains the stochastic agent: where it can go, what it can click,
+# how it weighs its options, and which LLM it asks for predictions.
+#
+# Read docs/CONFIG_GUIDE.md for a field-by-field walkthrough with examples.
+# Read docs/HOW_IT_WORKS.md for the narrative explanation of expectations & surprise.
+
+target:
+  url: https://the-internet.herokuapp.com/broken_images
+  allowedDomains:
+    - the-internet.herokuapp.com
+  # Hard guards. Elements whose accessible name matches any of these patterns
+  # are dropped before action sampling — never clicked, never typed into.
+  blockedSelectors:
+    - "a[href$='/logout']"
+    - "a[href*='github.com']"
+    - "form[action*='delete']"
+    - "[data-destructive='true']"
+  # Optional: known-buggy fallback URLs the bug-hunter rotates through if the
+  # primary target fails to surface a signal within run.maxSteps.
+  fallbackUrls:
+    - https://the-internet.herokuapp.com/status_codes/500
+    - https://the-internet.herokuapp.com/javascript_error
+    - https://the-internet.herokuapp.com/dynamic_loading/2
+
+run:
+  seed: 42                 # Same seed = same action sequence. Reproducible.
+  maxSteps: 30             # Stops after N MCTS steps even if no bug found.
+  humanDelayMs: 250        # Pause between actions (human-realistic timing).
+  thresholdMs: 3000        # Latency above this fires a PERF_BREACH hard signal.
+  stopOnFirstBug: true     # Set false to keep hunting after the first bug.
+
+actions:
+  # Action priors. Used by policy.js as Bayesian priors then combined with UCB1.
+  # Add BACK/FORWARD/REFRESH weights to encourage browser-history exploration —
+  # crucial for finding bugs that only appear after going back from a stale state.
+  weights:
+    CLICK: 0.40
+    INPUT: 0.15
+    NAVIGATION: 0.10
+    SCROLL: 0.10
+    BACK: 0.10
+    FORWARD: 0.05
+    REFRESH: 0.10
+  # Sample data injected into INPUT actions. Mix benign + adversarial.
+  dataPool:
+    - test_user
+    - "12345"
+    - "user@example.com"
+    - "!@#$%^&*()"
+    - "<script>alert(1)</script>"
+    - "' OR 1=1 --"
+    - "../../etc/passwd"
+
+# Macros — multi-step user flows the agent will fire as a single MCTS step.
+# Bugs that only appear after sequential interaction (e.g. submit → back → resubmit)
+# almost never surface from single-action sampling. Define them here.
+macros:
+  fireProbability: 0.15    # Chance a step uses a macro instead of a single action.
+  list:
+    - name: refresh_loop
+      weight: 1
+      steps:
+        - { type: REFRESH }
+        - { type: SCROLL }
+        - { type: REFRESH }
+    - name: back_then_refresh
+      weight: 1
+      steps:
+        - { type: BACK }
+        - { type: REFRESH }
+        - { type: FORWARD }
+    - name: submit_form_and_resubmit
+      weight: 2
+      # Generic best-effort submit pattern. Each INPUT targets the first matching
+      # field by accessible name; CLICK matches by visible text. Required: false
+      # means "don't abort the macro if this step doesn't match anything."
+      steps:
+        - { type: INPUT, target: "username", value: "test_user", required: false }
+        - { type: INPUT, target: "password", value: "wrongpass", required: false }
+        - { type: CLICK, target: "Submit", required: false }
+        - { type: BACK, required: false, delayMs: 400 }
+        - { type: CLICK, target: "Submit", required: false }
+
+mcts:
+  ucbC: 1.4                # Higher = more exploration, less exploitation.
+  rolloutDepth: 1          # Single-action rollouts (explained in docs/AGENT.md).
+  abstractionGranularity: medium   # fine | medium | coarse — see docs/CONFIG_GUIDE.md.
+
+llm:
+  provider: openai
+  model: gpt-4o-mini       # Cheapest capable OpenAI model. ~$0.15 / 1M input tokens.
+  maxTokens: 200
+  temperature: 0.4
+  enabled: true
+  # If false OR if OPENAI_API_KEY is missing, expectations.js falls back to
+  # hard-signal-only mode (pageerror / 5xx / asset 4xx). Still useful, less smart.
+
+observability:
+  otel:
+    enabled: true
+    exporter: file         # Local JSONL. No vendor. See DECISION_LOG 004.
+    path: BUG/${RUN_ID}/trace.jsonl
+  breadcrumbs:
+    enabled: true
+    path: BUG/${RUN_ID}/breadcrumbs.jsonl
+
+triage:
+  bugRoot: BUG
+  github:
+    enabled: false
+    # Set GITHUB_TOKEN, GITHUB_REPO_OWNER, GITHUB_REPO_NAME in .env to enable.
