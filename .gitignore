@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+.env.production
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build & cache
+coverage/
+.vitest-cache/
+dist/
+build/
+.cache/
+*.tsbuildinfo
+
+# Generated QA artefacts
+BUG/*/
+!BUG/.gitkeep
+repro.js
+crash-*.png
+dom-snapshot-*.html
+traces/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Dev-only reference docs (not project source)
+CLAUDE.md
+PROJECT_MAP.md
+docs/
