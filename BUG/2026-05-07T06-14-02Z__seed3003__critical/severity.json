@@ -1,0 +1,5 @@
+{
+  "severity": "critical",
+  "signal": "HTTP_5XX",
+  "surpriseScore": 1
+}

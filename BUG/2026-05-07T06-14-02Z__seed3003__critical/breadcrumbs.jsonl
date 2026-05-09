@@ -1,0 +1,30 @@
+{"ts":"2026-05-07T06:13:35.816Z","type":"run.start","summary":"run b646dc54 seed=3003 target=https://the-internet.herokuapp.com/status_codes/500"}
+{"ts":"2026-05-07T06:13:38.448Z","type":"navigate","summary":"goto https://the-internet.herokuapp.com/status_codes/500"}
+{"ts":"2026-05-07T06:13:38.497Z","type":"action","summary":"step=0 macro=\"submit_form_and_resubmit\""}
+{"ts":"2026-05-07T06:13:39.613Z","type":"macro.step","summary":"[submit_form_and_resubmit] INPUT \"username\" -> fail"}
+{"ts":"2026-05-07T06:13:39.620Z","type":"macro.step","summary":"[submit_form_and_resubmit] INPUT \"password\" -> fail"}
+{"ts":"2026-05-07T06:13:39.628Z","type":"macro.step","summary":"[submit_form_and_resubmit] CLICK \"Submit\" -> fail"}
+{"ts":"2026-05-07T06:13:39.657Z","type":"macro.step","summary":"[submit_form_and_resubmit] BACK -> fail"}
+{"ts":"2026-05-07T06:13:40.075Z","type":"macro.step","summary":"[submit_form_and_resubmit] CLICK \"Submit\" -> fail"}
+{"ts":"2026-05-07T06:13:41.853Z","type":"bug.skipped","summary":"skipped: page is at \"about:blank\" (back-from-fresh artifact, not a real bug)"}
+{"ts":"2026-05-07T06:13:41.856Z","type":"action","summary":"step=1 CLICK on \"here\""}
+{"ts":"2026-05-07T06:13:47.295Z","type":"bug.skipped","summary":"skipped: page is at \"about:blank\" (back-from-fresh artifact, not a real bug)"}
+{"ts":"2026-05-07T06:13:47.297Z","type":"action","summary":"step=2 macro=\"refresh_loop\""}
+{"ts":"2026-05-07T06:13:48.028Z","type":"macro.step","summary":"[refresh_loop] REFRESH -> ok"}
+{"ts":"2026-05-07T06:13:48.034Z","type":"macro.step","summary":"[refresh_loop] SCROLL -> ok"}
+{"ts":"2026-05-07T06:13:48.055Z","type":"macro.step","summary":"[refresh_loop] REFRESH -> ok"}
+{"ts":"2026-05-07T06:13:49.435Z","type":"action","summary":"step=3 CLICK on \"Fork me on GitHub\""}
+{"ts":"2026-05-07T06:13:51.985Z","type":"bug.skipped","summary":"skipped: page is at \"about:blank\" (back-from-fresh artifact, not a real bug)"}
+{"ts":"2026-05-07T06:13:51.986Z","type":"action","summary":"step=4 CLICK on \"Elemental Selenium\""}
+{"ts":"2026-05-07T06:13:54.213Z","type":"bug.skipped","summary":"skipped: page is at \"about:blank\" (back-from-fresh artifact, not a real bug)"}
+{"ts":"2026-05-07T06:13:54.215Z","type":"action","summary":"step=5 BACK on \"-\""}
+{"ts":"2026-05-07T06:13:56.330Z","type":"bug.skipped","summary":"skipped: page is at \"about:blank\" (back-from-fresh artifact, not a real bug)"}
+{"ts":"2026-05-07T06:13:56.332Z","type":"action","summary":"step=6 macro=\"submit_form_and_resubmit\""}
+{"ts":"2026-05-07T06:13:57.301Z","type":"macro.step","summary":"[submit_form_and_resubmit] INPUT \"username\" -> fail"}
+{"ts":"2026-05-07T06:13:57.305Z","type":"macro.step","summary":"[submit_form_and_resubmit] INPUT \"password\" -> fail"}
+{"ts":"2026-05-07T06:13:57.309Z","type":"macro.step","summary":"[submit_form_and_resubmit] CLICK \"Submit\" -> fail"}
+{"ts":"2026-05-07T06:13:57.310Z","type":"macro.step","summary":"[submit_form_and_resubmit] BACK -> fail"}
+{"ts":"2026-05-07T06:13:57.720Z","type":"macro.step","summary":"[submit_form_and_resubmit] CLICK \"Submit\" -> fail"}
+{"ts":"2026-05-07T06:13:58.993Z","type":"action","summary":"step=7 REFRESH on \"-\""}
+{"ts":"2026-05-07T06:14:01.088Z","type":"bug.skipped","summary":"skipped: page is at \"about:blank\" (back-from-fresh artifact, not a real bug)"}
+{"ts":"2026-05-07T06:14:01.091Z","type":"action","summary":"step=8 FORWARD on \"-\""}
