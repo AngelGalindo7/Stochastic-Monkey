@@ -1,5 +1,12 @@
-import { complete } from '../llm/openai.js';
+import { complete as completeOpenai } from '../llm/openai.js';
+import { complete as completeGemini } from '../llm/gemini.js';
 import { buildPredictPrompt, buildSurprisePrompt } from '../llm/prompts.js';
+
+function complete(opts) {
+  const provider = opts.provider ?? 'openai';
+  if (provider === 'gemini') return completeGemini(opts);
+  return completeOpenai(opts);
+}
 
 export const HARD_SIGNALS = {
   PAGEERROR: { score: 1.0, severity: 'high' },
@@ -17,6 +24,7 @@ export async function predict({ a11yTree, action, recentActions = [], llmConfig 
     model: llmConfig.model,
     maxTokens: llmConfig.maxTokens ?? 200,
     temperature: llmConfig.temperature ?? 0.4,
+    provider: llmConfig.provider,
   });
 }
 
@@ -46,6 +54,7 @@ export async function surprise({ prediction, observed, hardSignals = [], llmConf
     model: llmConfig.model,
     maxTokens: 120,
     temperature: 0,
+    provider: llmConfig.provider,
   });
   const parsed = parseSurpriseJson(raw);
   return {

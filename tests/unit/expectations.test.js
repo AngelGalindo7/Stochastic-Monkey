@@ -5,7 +5,13 @@ vi.mock('../../src/llm/openai.js', () => ({
   llmAvailable: vi.fn(() => true),
 }));
 
+vi.mock('../../src/llm/gemini.js', () => ({
+  complete: vi.fn(),
+  llmAvailable: vi.fn(() => true),
+}));
+
 import { complete } from '../../src/llm/openai.js';
+import { complete as completeGemini } from '../../src/llm/gemini.js';
 import {
   predict,
   surprise,
@@ -14,9 +20,10 @@ import {
 } from '../../src/agent/expectations.js';
 
 const llmConfig = { enabled: true, model: 'gpt-4o-mini', maxTokens: 100, temperature: 0 };
+const geminiConfig = { enabled: true, provider: 'gemini', model: 'gemini-2.0-flash-lite-001', maxTokens: 100, temperature: 0 };
 
 describe('expectations.predict', () => {
-  beforeEach(() => complete.mockReset());
+  beforeEach(() => { complete.mockReset(); completeGemini.mockReset(); });
 
   it('skips LLM when disabled', async () => {
     const out = await predict({ a11yTree: {}, action: {}, llmConfig: { enabled: false } });
@@ -97,6 +104,49 @@ describe('expectations.surprise', () => {
       llmConfig,
     });
     expect(out.signalType).toBe('HTTP_5XX');
+  });
+});
+
+describe('expectations with gemini provider', () => {
+  beforeEach(() => { complete.mockReset(); completeGemini.mockReset(); });
+
+  it('routes predict to gemini when provider=gemini', async () => {
+    completeGemini.mockResolvedValueOnce('Page will submit the form.');
+    const out = await predict({
+      a11yTree: { role: 'main' },
+      action: { type: 'CLICK', target: { role: 'button', name: 'Submit' } },
+      llmConfig: geminiConfig,
+    });
+    expect(out).toBe('Page will submit the form.');
+    expect(completeGemini).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('routes surprise to gemini and parses JSON score', async () => {
+    completeGemini.mockResolvedValueOnce('{"score": 0.85, "severity": "high", "reason": "form error appeared"}');
+    const out = await surprise({
+      prediction: 'page loads',
+      observed: { role: 'main' },
+      hardSignals: [],
+      llmConfig: geminiConfig,
+    });
+    expect(out.score).toBeCloseTo(0.85);
+    expect(out.severity).toBe('high');
+    expect(out.reason).toBe('form error appeared');
+    expect(out.hardSignalOverride).toBe(false);
+    expect(completeGemini).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('defaults to openai when provider is not set', async () => {
+    complete.mockResolvedValueOnce('ok');
+    await predict({
+      a11yTree: { role: 'main' },
+      action: { type: 'CLICK', target: { role: 'button', name: 'Go' } },
+      llmConfig,
+    });
+    expect(complete).toHaveBeenCalledOnce();
+    expect(completeGemini).not.toHaveBeenCalled();
   });
 });
 

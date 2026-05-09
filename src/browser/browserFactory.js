@@ -2,7 +2,7 @@ import { launchPuppeteer } from './puppeteer.js';
 import { launchLightpanda, NotImplementedError } from './lightpanda.js';
 
 export async function createBrowser({ preferLightpanda = true, headful = false } = {}) {
-  if (preferLightpanda && process.platform !== 'win32') {
+  if (preferLightpanda && process.platform !== 'win32' && process.env.LIGHTPANDA_CDP_URL) {
     try {
       return await launchLightpanda({ headful });
     } catch (err) {
@@ -14,8 +14,6 @@ export async function createBrowser({ preferLightpanda = true, headful = false }
         console.warn(`[browser] lightpanda launch failed: ${err.message}`);
       }
     }
-  } else if (preferLightpanda) {
-    console.warn('[browser] lightpanda_unavailable: Windows host (decision=002).');
   }
   return launchPuppeteer({ headful });
 }

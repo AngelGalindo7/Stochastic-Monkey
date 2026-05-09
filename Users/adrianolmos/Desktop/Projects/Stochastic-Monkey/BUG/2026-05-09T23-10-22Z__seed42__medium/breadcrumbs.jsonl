@@ -1,0 +1,6 @@
+{"ts":"2026-05-09T23:10:19.101Z","type":"run.start","summary":"run 85c3273e seed=42 target=https://the-internet.herokuapp.com/broken_images"}
+{"ts":"2026-05-09T23:10:20.922Z","type":"navigate","summary":"goto https://the-internet.herokuapp.com/broken_images"}
+{"ts":"2026-05-09T23:10:20.940Z","type":"action","summary":"step=0 macro=\"refresh_loop\""}
+{"ts":"2026-05-09T23:10:21.813Z","type":"macro.step","summary":"[refresh_loop] REFRESH -> ok"}
+{"ts":"2026-05-09T23:10:21.815Z","type":"macro.step","summary":"[refresh_loop] SCROLL -> ok"}
+{"ts":"2026-05-09T23:10:22.067Z","type":"macro.step","summary":"[refresh_loop] REFRESH -> ok"}

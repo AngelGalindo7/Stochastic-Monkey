@@ -1,0 +1,6 @@
+{"ts":"2026-05-09T23:20:23.326Z","type":"run.start","summary":"run edfd0092 seed=42 target=https://the-internet.herokuapp.com/broken_images"}
+{"ts":"2026-05-09T23:20:25.192Z","type":"navigate","summary":"goto https://the-internet.herokuapp.com/broken_images"}
+{"ts":"2026-05-09T23:20:25.210Z","type":"action","summary":"step=0 macro=\"refresh_loop\""}
+{"ts":"2026-05-09T23:20:25.994Z","type":"macro.step","summary":"[refresh_loop] REFRESH -> ok"}
+{"ts":"2026-05-09T23:20:25.997Z","type":"macro.step","summary":"[refresh_loop] SCROLL -> ok"}
+{"ts":"2026-05-09T23:20:26.169Z","type":"macro.step","summary":"[refresh_loop] REFRESH -> ok"}

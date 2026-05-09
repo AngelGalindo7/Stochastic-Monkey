@@ -1,4 +1,4 @@
-# How Heuristic Monkey works (plain-English version)
+2# How Heuristic Monkey works (plain-English version)
 
 If you've never set up YAML test configs or thought about "expectations" before, start here. This document walks through one full agent step in narrative form so the rest of the docs make sense.
 

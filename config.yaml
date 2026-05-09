@@ -88,12 +88,12 @@ mcts:
   abstractionGranularity: medium   # fine | medium | coarse — see docs/CONFIG_GUIDE.md.
 
 llm:
-  provider: openai
-  model: gpt-4o-mini       # Cheapest capable OpenAI model. ~$0.15 / 1M input tokens.
+  provider: gemini
+  model: gemini-2.5-flash-lite
   maxTokens: 200
   temperature: 0.4
   enabled: true
-  # If false OR if OPENAI_API_KEY is missing, expectations.js falls back to
+  # If false OR if GEMINI_API_KEY is missing, expectations.js falls back to
   # hard-signal-only mode (pageerror / 5xx / asset 4xx). Still useful, less smart.
 
 observability:

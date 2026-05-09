@@ -9,7 +9,7 @@ export default defineConfig({
     coverage: {
       reporter: ['text', 'lcov'],
       include: ['src/**/*.js'],
-      exclude: ['src/index.js', 'src/browser/lightpanda.js'],
+      exclude: ['src/index.js'],
     },
   },
 });

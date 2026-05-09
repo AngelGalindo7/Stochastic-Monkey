@@ -1,0 +1,5 @@
+{
+  "severity": "medium",
+  "signal": "ASSET_4XX",
+  "surpriseScore": 0.9
+}
