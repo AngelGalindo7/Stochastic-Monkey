@@ -6,6 +6,7 @@ const REQUIRED = {
 };
 
 const ALLOWED_GRANULARITIES = new Set(['fine', 'medium', 'coarse']);
+const ALLOWED_OTEL_EXPORTERS = new Set(['file', 'otlp', 'both']);
 
 export function validate(config) {
   if (!config || typeof config !== 'object') {
@@ -37,6 +38,11 @@ export function validate(config) {
   if (config.mcts.abstractionGranularity &&
       !ALLOWED_GRANULARITIES.has(config.mcts.abstractionGranularity)) {
     throw new Error(`config: mcts.abstractionGranularity must be one of ${[...ALLOWED_GRANULARITIES].join(', ')}`);
+  }
+
+  const exporter = config.observability?.otel?.exporter;
+  if (exporter !== undefined && !ALLOWED_OTEL_EXPORTERS.has(exporter)) {
+    throw new Error(`config: observability.otel.exporter must be one of ${[...ALLOWED_OTEL_EXPORTERS].join(', ')}`);
   }
 
   if (typeof config.run.seed !== 'number') {
