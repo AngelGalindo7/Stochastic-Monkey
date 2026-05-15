@@ -99,7 +99,7 @@ llm:
 observability:
   otel:
     enabled: true
-    exporter: file         # Local JSONL. No vendor. See DECISION_LOG 004.
+    exporter: both         # file | otlp | both. Grafana Cloud Tempo via OTLP plus local JSONL archive.
     path: BUG/${RUN_ID}/trace.jsonl
   breadcrumbs:
     enabled: true

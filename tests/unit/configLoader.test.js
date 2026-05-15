@@ -145,4 +145,30 @@ describe('config.schema.validate', () => {
       }),
     ).toThrow(/weights/);
   });
+
+  it('rejects unknown observability.otel.exporter', () => {
+    expect(() =>
+      validate({
+        target: { url: 'http://x', allowedDomains: ['x'] },
+        run: { seed: 1, maxSteps: 1 },
+        actions: { weights: { CLICK: 1 } },
+        mcts: { ucbC: 1 },
+        observability: { otel: { exporter: 'filee' } },
+      }),
+    ).toThrow(/exporter/);
+  });
+
+  it('accepts each valid observability.otel.exporter value', () => {
+    for (const exporter of ['file', 'otlp', 'both']) {
+      expect(() =>
+        validate({
+          target: { url: 'http://x', allowedDomains: ['x'] },
+          run: { seed: 1, maxSteps: 1 },
+          actions: { weights: { CLICK: 1 } },
+          mcts: { ucbC: 1 },
+          observability: { otel: { exporter } },
+        }),
+      ).not.toThrow();
+    }
+  });
 });
