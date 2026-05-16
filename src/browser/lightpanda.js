@@ -78,6 +78,11 @@ class LightpandaPage {
   constructor(cdp) {
     this.#cdp = cdp;
     this.accessibility = { snapshot: (opts) => this.#a11ySnapshot(opts) };
+    this._isLightpanda = true;
+  }
+
+  get cdp() {
+    return this.#cdp;
   }
 
   url() {
