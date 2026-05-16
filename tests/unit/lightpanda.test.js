@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { launchLightpanda, NotImplementedError } from '../../src/browser/lightpanda.js';
+import { snapshotPage, listInteractiveNodes } from '../../src/perception/a11yTree.js';
 
 function createMockCDP(port) {
   const server = new WebSocketServer({ port });
@@ -57,6 +58,23 @@ function createMockCDP(port) {
                 { nodeId: '1', role: { value: 'WebArea' }, name: { value: '' }, properties: [], childIds: ['2'] },
                 { nodeId: '2', role: { value: 'heading' }, name: { value: 'Hello' }, properties: [], parentId: '1' },
               ],
+            },
+          }));
+          break;
+
+        case 'LP.getSemanticTree':
+          ws.send(JSON.stringify({
+            id,
+            result: {
+              tree: {
+                role: 'WebArea',
+                name: '',
+                children: [
+                  { role: 'heading', name: 'Hello' },
+                  { role: 'link', name: 'Click me' },
+                  { role: 'generic', name: '' },
+                ],
+              },
             },
           }));
           break;
@@ -194,6 +212,48 @@ describe('lightpanda CDP adapter', () => {
     const browser = await launchLightpanda();
     const page = await browser.newPage();
     await page.raw.setCookie({ name: 'sid', value: 'abc', domain: '.example.com' });
+    await browser.close();
+    delete process.env.LIGHTPANDA_CDP_URL;
+  });
+
+  it('snapshotPage uses LP.getSemanticTree for Lightpanda pages', async () => {
+    process.env.LIGHTPANDA_CDP_URL = `ws://127.0.0.1:${PORT}`;
+    const browser = await launchLightpanda();
+    const page = await browser.newPage();
+    await page.raw.goto('https://example.com');
+    const tree = await snapshotPage(page.raw);
+    expect(tree).toBeTruthy();
+    expect(tree.role).toBe('WebArea');
+    expect(tree.children.length).toBe(2);
+    expect(tree.children[0].role).toBe('heading');
+    expect(tree.children[0].name).toBe('Hello');
+    expect(tree.children[1].role).toBe('link');
+    expect(tree.children[1].name).toBe('Click me');
+    await browser.close();
+    delete process.env.LIGHTPANDA_CDP_URL;
+  });
+
+  it('LP.getSemanticTree prunes layout-only nodes', async () => {
+    process.env.LIGHTPANDA_CDP_URL = `ws://127.0.0.1:${PORT}`;
+    const browser = await launchLightpanda();
+    const page = await browser.newPage();
+    await page.raw.goto('https://example.com');
+    const tree = await snapshotPage(page.raw);
+    const names = tree.children.map((c) => c.role);
+    expect(names).not.toContain('generic');
+    await browser.close();
+    delete process.env.LIGHTPANDA_CDP_URL;
+  });
+
+  it('LP.getSemanticTree tree works with listInteractiveNodes', async () => {
+    process.env.LIGHTPANDA_CDP_URL = `ws://127.0.0.1:${PORT}`;
+    const browser = await launchLightpanda();
+    const page = await browser.newPage();
+    await page.raw.goto('https://example.com');
+    const tree = await snapshotPage(page.raw);
+    const interactive = listInteractiveNodes(tree);
+    expect(interactive.length).toBe(1);
+    expect(interactive[0].name).toBe('Click me');
     await browser.close();
     delete process.env.LIGHTPANDA_CDP_URL;
   });
