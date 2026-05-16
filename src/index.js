@@ -150,10 +150,12 @@ async function main() {
 
     const macroFireProb = config.macros?.fireProbability ?? 0;
     const macroList = config.macros?.list ?? [];
+    const recentStateIds = [];
 
     for (let step = 0; step < config.run.maxSteps; step++) {
       const a11y = await snapshotPage(page.raw);
       const stateId = clusterId(a11y, config.mcts.abstractionGranularity);
+      recentStateIds.push(stateId);
       const cands = candidateActions(a11y, {
         weights: config.actions.weights,
         blockedSelectors: config.target.blockedSelectors,
@@ -218,6 +220,9 @@ async function main() {
 
           const newEvents = page.events.slice(beforeEvents);
           const observed = await snapshotPage(page.raw).catch(() => null);
+          const observedStateId = observed
+            ? clusterId(observed, config.mcts.abstractionGranularity)
+            : null;
           const { signals: hardSignals, evidence: hardEvidence } =
             pageEventsToHardSignals(newEvents);
           hardEvidenceOuter = hardEvidence;
@@ -227,6 +232,9 @@ async function main() {
             prediction,
             observed,
             hardSignals,
+            recentActions,
+            recentStateIds,
+            currentStateId: observedStateId,
             llmConfig: config.llm,
           });
           span.setAttribute('surprise.score', surpriseResult.score);
