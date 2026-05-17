@@ -28,7 +28,15 @@ export async function predict({ a11yTree, action, recentActions = [], llmConfig 
   });
 }
 
-export async function surprise({ prediction, observed, hardSignals = [], llmConfig }) {
+export async function surprise({
+  prediction,
+  observed,
+  hardSignals = [],
+  recentActions = [],
+  recentStateIds = [],
+  currentStateId = null,
+  llmConfig,
+}) {
   const hard = highestHardSignal(hardSignals);
   if (hard) {
     return {
@@ -48,7 +56,14 @@ export async function surprise({ prediction, observed, hardSignals = [], llmConf
       reason: 'no hard signal, LLM disabled',
     };
   }
-  const prompt = buildSurprisePrompt({ prediction, observed, hardSignals });
+  const prompt = buildSurprisePrompt({
+    prediction,
+    observed,
+    hardSignals,
+    recentActions,
+    recentStateIds,
+    currentStateId,
+  });
   const raw = await complete({
     prompt,
     model: llmConfig.model,
