@@ -52,8 +52,8 @@ function forwardEventsTo(srcArr, dstArr) {
   };
 }
 
-export async function createBrowser({ preferLightpanda = true, headful = false } = {}) {
-  const launchOpts = { headful };
+export async function createBrowser({ preferLightpanda = true, headful = false, userDataDir } = {}) {
+  const launchOpts = { headful, ...(userDataDir ? { userDataDir } : {}) };
   let active = preferLightpanda ? await tryLaunchLightpanda(launchOpts) : null;
   if (!active) active = await launchPuppeteer(launchOpts);
 
