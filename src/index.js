@@ -104,10 +104,13 @@ async function main() {
 
   const rng = seedrandom(String(seed));
   const persistSession = config.auth?.persistSession === true;
+  const engine = config.browser?.engine ?? 'puppeteer';
   const browser = await createBrowser({
-    preferLightpanda: true,
+    engine,
+    preferLightpanda: engine === 'puppeteer',
     headful: process.env.HEADFUL === 'true',
-    userDataDir: persistSession ? path.resolve(PROJECT_ROOT, '.puppeteer-data') : undefined,
+    userDataDir: persistSession ? path.resolve(PROJECT_ROOT, engine === 'playwright' ? '.playwright-data' : '.puppeteer-data') : undefined,
+    storageState: config.browser?.storageState,
   });
   const page = await browser.newPage();
 
@@ -214,7 +217,7 @@ async function main() {
     }
 
     await page.raw.goto(config.target.url, {
-      waitUntil: 'networkidle2',
+      waitUntil: engine === 'playwright' ? 'networkidle' : 'networkidle2',
       timeout: 30000,
     });
 
@@ -230,7 +233,7 @@ async function main() {
         await page.raw.evaluate((entries) => {
           for (const [k, v] of entries) localStorage.setItem(k, v);
         }, lsEntries);
-        await page.raw.goto(config.target.url, { waitUntil: 'networkidle2', timeout: 30000 });
+        await page.raw.goto(config.target.url, { waitUntil: engine === 'playwright' ? 'networkidle' : 'networkidle2', timeout: 30000 });
         breadcrumbs.record('auth', `seeded ${lsEntries.length} localStorage key(s); re-navigated`);
       } else {
         breadcrumbs.record('auth', `reusing ${lsEntries.length} persisted localStorage key(s)`);
