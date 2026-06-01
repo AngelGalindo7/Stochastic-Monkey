@@ -1,6 +1,7 @@
 import { complete as completeOpenai } from '../llm/openai.js';
 import { complete as completeGemini } from '../llm/gemini.js';
-import { buildPredictPrompt, buildSurprisePrompt } from '../llm/prompts.js';
+import { buildPredictPrompt } from '../llm/prompts.js';
+import { scoreNovelty } from './novelty.js';
 
 function complete(opts) {
   const provider = opts.provider ?? 'openai';
@@ -8,14 +9,22 @@ function complete(opts) {
   return completeOpenai(opts);
 }
 
+// The bug oracle. Each entry is a deterministic, unambiguous fault — primarily
+// HTTP status codes plus uncaught page errors. When any of these fire, the step
+// is a bug regardless of how "novel" the resulting state looks. The LLM is NOT
+// consulted for this verdict (see DECISION_LOG: HTTP-code-driven detection).
 export const HARD_SIGNALS = {
   PAGEERROR: { score: 1.0, severity: 'high' },
   HTTP_5XX: { score: 1.0, severity: 'critical' },
+  HTTP_4XX_NAV: { score: 0.8, severity: 'medium' },
   ASSET_4XX: { score: 0.9, severity: 'medium' },
   PERF_BREACH: { score: 0.6, severity: 'low' },
   DOM_FROZEN: { score: 0.85, severity: 'medium' },
 };
 
+// LLM-backed prediction of an action's expected outcome. No longer called from
+// the per-step hot loop (detection is deterministic) — retained for the future
+// test-synthesis stage, where the LLM proposes test code rather than verdicts.
 export async function predict({ a11yTree, action, recentActions = [], llmConfig }) {
   if (!llmConfig?.enabled) return 'LLM disabled — hard signals only.';
   const prompt = buildPredictPrompt({ a11yTree, action, recentActions });
@@ -28,69 +37,48 @@ export async function predict({ a11yTree, action, recentActions = [], llmConfig 
   });
 }
 
-export async function surprise({
-  prediction,
+// Score a single step. Two separate questions, never conflated:
+//   isBug  — owned by hard signals (HTTP codes / pageerror). Deterministic.
+//   score  — exploration novelty for MCTS backprop. Never declares a bug.
+export function scoreState({
   observed,
+  prevA11y = null,
+  currentUrl = null,
+  prevUrl = null,
   hardSignals = [],
-  recentActions = [],
   recentStateIds = [],
   currentStateId = null,
-  llmConfig,
+  lowSignalExtra = [],
 }) {
   const hard = highestHardSignal(hardSignals);
   if (hard) {
     return {
       score: hard.spec.score,
       severity: hard.spec.severity,
+      isBug: true,
       hardSignalOverride: true,
       signalType: hard.type,
       reason: `hard signal: ${hard.type}`,
     };
   }
-  if (!llmConfig?.enabled) {
-    return {
-      score: 0,
-      severity: 'low',
-      hardSignalOverride: false,
-      signalType: null,
-      reason: 'no hard signal, LLM disabled',
-    };
-  }
-  const prompt = buildSurprisePrompt({
-    prediction,
-    observed,
-    hardSignals,
-    recentActions,
-    recentStateIds,
+
+  const nov = scoreNovelty({
+    prevA11y,
+    currA11y: observed,
+    prevUrl,
+    currUrl: currentUrl,
     currentStateId,
+    recentStateIds,
+    lowSignalExtra,
   });
-  const raw = await complete({
-    prompt,
-    model: llmConfig.model,
-    maxTokens: 120,
-    temperature: 0,
-    provider: llmConfig.provider,
-  });
-  const parsed = parseSurpriseJson(raw);
   return {
-    score: parsed.score,
-    severity: scoreToSeverity(parsed.score),
+    score: nov.score,
+    severity: 'info',
+    isBug: false,
     hardSignalOverride: false,
     signalType: null,
-    reason: parsed.reason,
+    reason: nov.reason,
   };
-}
-
-export function parseSurpriseJson(raw) {
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return { score: 0, reason: 'unparsable LLM response' };
-  try {
-    const obj = JSON.parse(match[0]);
-    const score = clamp01(Number(obj.score));
-    return { score, reason: obj.reason ?? '' };
-  } catch {
-    return { score: 0, reason: 'invalid LLM JSON' };
-  }
 }
 
 function highestHardSignal(signals) {
@@ -101,16 +89,4 @@ function highestHardSignal(signals) {
     if (!best || spec.score > best.spec.score) best = { type: s, spec };
   }
   return best;
-}
-
-function scoreToSeverity(score) {
-  if (score >= 0.85) return 'high';
-  if (score >= 0.6) return 'medium';
-  if (score >= 0.3) return 'low';
-  return 'low';
-}
-
-function clamp01(n) {
-  if (Number.isNaN(n)) return 0;
-  return Math.max(0, Math.min(1, n));
 }
