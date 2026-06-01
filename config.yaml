@@ -6,26 +6,65 @@
 # Read docs/HOW_IT_WORKS.md for the narrative explanation of expectations & surprise.
 
 target:
-  url: https://the-internet.herokuapp.com/broken_images
+  url: https://adrianolm.com
   allowedDomains:
-    - the-internet.herokuapp.com
+    - localhost
   # Hard guards. Elements whose accessible name matches any of these patterns
   # are dropped before action sampling — never clicked, never typed into.
   blockedSelectors:
     - "a[href$='/logout']"
     - "a[href*='github.com']"
-    - "form[action*='delete']"
-    - "[data-destructive='true']"
-  # Optional: known-buggy fallback URLs the bug-hunter rotates through if the
-  # primary target fails to surface a signal within run.maxSteps.
-  fallbackUrls:
-    - https://the-internet.herokuapp.com/status_codes/500
-    - https://the-internet.herokuapp.com/javascript_error
-    - https://the-internet.herokuapp.com/dynamic_loading/2
+
+auth:
+  # Preferred path: POST credentials to /users/login before SPA boot, then seed
+  # the cookies block below with the freshly-issued tokens from Set-Cookie.
+  # Removes the manual refresh_token paste from the loop. When this block is
+  # present, refreshUrl/pre-refresh is skipped (login already returned fresh
+  # tokens). Rate limit: /users/login is 5/min, 20/hour per IP — restarts
+  # faster than that will 429. See DECISION_LOG 010.
+  login:
+    url: http://localhost:8000/users/login
+    email: testuser@gmail.com
+    password: Password
+  # Templates only when `login` is set — `value` is filled from the Set-Cookie
+  # response. Keep the metadata (domain, path, sameSite, secure) accurate for
+  # the target site or puppeteer will reject the cookie.
+  cookies:
+    - name: access_token
+      value: ""
+      domain: localhost
+      path: /
+      sameSite: None
+      secure: true
+    - name: refresh_token
+      value: ""
+      domain: localhost
+      path: /
+      sameSite: None
+      secure: true
+  # PetrCollect's frontend reads session from localStorage (see shared/auth/session.ts).
+  # Cookies alone authenticate the API but the UI stays logged-out without these.
+  localStorage:
+    userId: "1"
+    username: "testuser"
+    email: "testuser@gmail.com"
+    role: "user"
+    theme: "light"
+  # Persist puppeteer's user-data-dir between runs (cookies + localStorage live
+  # in .puppeteer-data/). First run uses the values above to seed the jar; every
+  # subsequent run reuses whatever the SPA last wrote, so single-use refresh
+  # tokens that rotate during a run stay valid for the next one. Delete
+  # .puppeteer-data/ to reset and force re-seeding from this file.
+  persistSession: true
+  # When set AND we just seeded cookies from config, the monkey POSTs to this
+  # endpoint before the SPA boots — rotating the configured refresh_token into
+  # a freshly-issued pair that the SPA's own boot refresh can safely consume.
+  # Skipped on subsequent runs because persisted cookies replace config seeding.
+  refreshUrl: http://localhost:8000/auth/refresh-token
 
 run:
   seed: 42                 # Same seed = same action sequence. Reproducible.
-  maxSteps: 30             # Stops after N MCTS steps even if no bug found.
+  maxSteps: 100            # Stops after N MCTS steps even if no bug found.
   humanDelayMs: 250        # Pause between actions (human-realistic timing).
   thresholdMs: 3000        # Latency above this fires a PERF_BREACH hard signal.
   stopOnFirstBug: true     # Set false to keep hunting after the first bug.
@@ -37,11 +76,17 @@ actions:
   weights:
     CLICK: 0.40
     INPUT: 0.15
+    UPLOAD: 0.10
     NAVIGATION: 0.10
-    SCROLL: 0.10
-    BACK: 0.10
+    SCROLL: 0.05
+    BACK: 0.05
     FORWARD: 0.05
     REFRESH: 0.10
+  filesPool:
+    - { path: fixtures/uploads/tiny.jpg,      mime: image/jpeg }
+    - { path: fixtures/uploads/tiny.png,      mime: image/png }
+    - { path: fixtures/uploads/oversized.jpg, mime: image/jpeg }
+    - { path: fixtures/uploads/corrupt.png,   mime: image/png }
   # Sample data injected into INPUT actions. Mix benign + adversarial.
   dataPool:
     - test_user
@@ -87,14 +132,26 @@ mcts:
   rolloutDepth: 1          # Single-action rollouts (explained in docs/AGENT.md).
   abstractionGranularity: medium   # fine | medium | coarse — see docs/CONFIG_GUIDE.md.
 
+# Exploration novelty (MCTS reward only — NEVER declares a bug; bugs come solely
+# from HTTP error codes / hard signals). The deterministic scorer collapses
+# digit runs and UUIDs automatically; add patterns here for any app-specific
+# accessible names that churn every render (banners, live counters, tokens) so
+# they don't masquerade as a "new control". Optional — sensible defaults apply.
+novelty:
+  nameDenylist:
+    - "unread( messages)?"
+    - "online now"
+
 llm:
+  # The LLM is NO LONGER in the per-step detection loop — error detection is
+  # deterministic (HTTP codes + hard signals). These settings now govern only
+  # the future test-synthesis stage (LLM proposes test code, never verdicts).
+  # Safe to leave as-is; a missing API key no longer collapses a run.
   provider: gemini
   model: gemini-2.5-flash-lite
   maxTokens: 200
   temperature: 0.4
   enabled: true
-  # If false OR if GEMINI_API_KEY is missing, expectations.js falls back to
-  # hard-signal-only mode (pageerror / 5xx / asset 4xx). Still useful, less smart.
 
 observability:
   otel:
