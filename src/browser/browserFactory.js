@@ -1,4 +1,5 @@
 import { launchPuppeteer } from './puppeteer.js';
+import { launchPlaywright } from './playwright.js';
 import { launchLightpanda, NotImplementedError } from './lightpanda.js';
 
 // Error fingerprints that mean the Lightpanda CDP-shaped page can no longer
@@ -52,8 +53,12 @@ function forwardEventsTo(srcArr, dstArr) {
   };
 }
 
-export async function createBrowser({ preferLightpanda = true, headful = false } = {}) {
-  const launchOpts = { headful };
+export async function createBrowser({ engine = 'puppeteer', preferLightpanda = true, headful = false, userDataDir, storageState } = {}) {
+  if (engine === 'playwright') {
+    return launchPlaywright({ headful, userDataDir, storageState });
+  }
+
+  const launchOpts = { headful, ...(userDataDir ? { userDataDir } : {}) };
   let active = preferLightpanda ? await tryLaunchLightpanda(launchOpts) : null;
   if (!active) active = await launchPuppeteer(launchOpts);
 
