@@ -34,6 +34,10 @@ crash-*.png
 dom-snapshot-*.html
 traces/
 
+# Persisted puppeteer profile (auth.persistSession=true). Contains cookies and
+# localStorage from prior runs — never commit, it leaks session tokens.
+.puppeteer-data/
+
 # OS
 .DS_Store
 .DS_Store?
