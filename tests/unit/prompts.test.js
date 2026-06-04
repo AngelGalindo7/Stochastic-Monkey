@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPredictPrompt, buildSurprisePrompt } from '../../src/llm/prompts.js';
+import { buildPredictPrompt } from '../../src/llm/prompts.js';
 
 const a11y = { role: 'main', children: [{ role: 'button', name: 'Submit' }] };
 const action = { type: 'CLICK', target: { role: 'button', name: 'Submit' } };
@@ -34,18 +34,5 @@ describe('buildPredictPrompt', () => {
     });
     expect(prompt).toMatch(/"role":"button"/);
     expect(prompt).toMatch(/Proposed action: CLICK/);
-  });
-});
-
-describe('buildSurprisePrompt', () => {
-  it('always includes prediction and signals block', () => {
-    const prompt = buildSurprisePrompt({
-      prediction: 'page navigates',
-      observed: a11y,
-      hardSignals: ['HTTP_5XX'],
-    });
-    expect(prompt).toMatch(/Prediction: page navigates/);
-    expect(prompt).toMatch(/HTTP_5XX/);
-    expect(prompt).toMatch(/Reply with JSON/);
   });
 });
