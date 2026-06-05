@@ -4,7 +4,7 @@ export const SIGNAL_SEVERITY = {
   HTTP_4XX: 'medium',
   ASSET_4XX: 'medium',
   REQUEST_FAILED: 'medium',
-  CONSOLE_ERROR: 'low',
+  CONSOLE_ERROR: 'medium',
   PERF_BREACH: 'low',
   DOM_FROZEN: 'medium',
 };
