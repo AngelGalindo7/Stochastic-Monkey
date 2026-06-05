@@ -18,7 +18,7 @@ export async function launchPuppeteer({ headful = false } = {}) {
       );
       page.on('console', (msg) => {
         if (msg.type() === 'error') {
-          events.push({ type: 'CONSOLE_ERROR', message: msg.text() });
+          events.push({ type: 'CONSOLE_ERROR', message: msg.text(), url: msg.location()?.url });
         }
       });
       page.on('requestfailed', (req) =>
