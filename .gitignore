@@ -29,6 +29,7 @@ build/
 # Generated QA artefacts
 BUG/*/
 !BUG/.gitkeep
+tests/smoke/BUG/
 repro.js
 crash-*.png
 dom-snapshot-*.html
