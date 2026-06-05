@@ -9,11 +9,12 @@ function complete(opts) {
 }
 
 export const HARD_SIGNALS = {
-  PAGEERROR: { score: 1.0, severity: 'high' },
-  HTTP_5XX: { score: 1.0, severity: 'critical' },
-  ASSET_4XX: { score: 0.9, severity: 'medium' },
-  PERF_BREACH: { score: 0.6, severity: 'low' },
-  DOM_FROZEN: { score: 0.85, severity: 'medium' },
+  PAGEERROR:     { score: 1.0,  severity: 'high' },
+  HTTP_5XX:      { score: 1.0,  severity: 'critical' },
+  ASSET_4XX:     { score: 0.9,  severity: 'medium' },
+  DOM_FROZEN:    { score: 0.85, severity: 'medium' },
+  CONSOLE_ERROR: { score: 0.8,  severity: 'medium' },
+  PERF_BREACH:   { score: 0.6,  severity: 'low' },
 };
 
 export async function predict({ a11yTree, action, recentActions = [], llmConfig }) {
