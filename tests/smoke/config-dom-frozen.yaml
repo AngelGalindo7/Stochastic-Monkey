@@ -1,0 +1,41 @@
+target:
+  url: http://localhost:3099/dom-frozen.html
+  allowedDomains: [localhost]
+  blockedSelectors: []
+
+run:
+  seed: 1
+  maxSteps: 5
+  humanDelayMs: 150
+  thresholdMs: 5000
+  stopOnFirstBug: true
+
+actions:
+  weights:
+    CLICK: 1.0
+    INPUT: 0.0
+    NAVIGATION: 0.0
+    SCROLL: 0.0
+    BACK: 0.0
+    FORWARD: 0.0
+    REFRESH: 0.0
+  dataPool: []
+
+macros:
+  fireProbability: 0
+
+mcts:
+  ucbC: 1.4
+  abstractionGranularity: medium
+
+llm:
+  enabled: false
+
+observability:
+  otel:
+    enabled: false
+  breadcrumbs:
+    enabled: false
+
+triage:
+  bugRoot: tests/smoke/BUG

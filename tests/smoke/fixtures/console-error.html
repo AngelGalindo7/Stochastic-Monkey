@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <h1>Console Error Fixture</h1>
+  <button id="btn">Click me</button>
+  <script>
+    // Fires every 50 ms so at least one error lands inside any MCTS step window.
+    setInterval(function () {
+      console.error('W6-smoke: recurring first-party console.error');
+    }, 50);
+  </script>
+</body>
+</html>
