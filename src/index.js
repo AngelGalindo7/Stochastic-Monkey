@@ -122,15 +122,35 @@ function pageEventsToHardSignals(events, targetOrigin) {
   return { signals: out, evidence };
 }
 
-async function checkDomFrozen(page) {
+const DOM_FROZEN_SETTLE_MS = 400;
+
+async function isDomEmptyNow(page) {
+  return page.raw.evaluate(() => {
+    const body = document.body;
+    if (!body) return true;
+    const hasContent = (el) =>
+      el.textContent.trim().length > 0 ||
+      el.querySelector('img, svg, canvas, video, iframe') !== null;
+    if (hasContent(body)) return false;
+    // No text or media anywhere in the body. A single unhydrated mount point
+    // (e.g. <div id="root"></div>) counts as empty only if that container is
+    // itself childless — a populated-but-textless layout is still alive.
+    const containers = Array.from(body.children);
+    if (containers.length === 0) return true;
+    return containers.every((el) => el.children.length === 0);
+  });
+}
+
+// Re-checks after a settle delay so a transient empty DOM mid-SPA-hydration
+// (URL already swapped, route not yet mounted) is not misreported as frozen.
+async function checkDomFrozen(page, { settleMs = 0 } = {}) {
   try {
-    return await page.raw.evaluate(() => {
-      const body = document.body;
-      if (!body || body.children.length === 0) return true;
-      const hasText = body.textContent.trim().length > 0;
-      const hasMedia = body.querySelector('img, svg, canvas, video, iframe') !== null;
-      return !hasText && !hasMedia;
-    });
+    if (!(await isDomEmptyNow(page))) return false;
+    if (settleMs > 0) {
+      await new Promise((r) => setTimeout(r, settleMs));
+      return await isDomEmptyNow(page);
+    }
+    return true;
   } catch {
     return false;
   }
@@ -257,12 +277,18 @@ async function main() {
           hardEvidenceOuter = hardEvidence;
           if (result.latencyMs > config.run.thresholdMs) hardSignals.push('PERF_BREACH');
 
-          const frozenUrl = page.raw.url();
-          if (frozenUrl && frozenUrl !== 'about:blank' && frozenUrl !== '') {
-            if (await checkDomFrozen(page)) {
-              hardSignals.push('DOM_FROZEN');
-              hardEvidence.push({ signal: 'DOM_FROZEN', detail: `empty body at ${frozenUrl}` });
+          try {
+            const frozenUrl = page.raw.url();
+            if (frozenUrl && frozenUrl !== 'about:blank' && frozenUrl !== '') {
+              const settleMs = config.run.domSettleMs ?? DOM_FROZEN_SETTLE_MS;
+              if (await checkDomFrozen(page, { settleMs })) {
+                hardSignals.push('DOM_FROZEN');
+                hardEvidence.push({ signal: 'DOM_FROZEN', detail: `empty body at ${frozenUrl}` });
+              }
             }
+          } catch {
+            // Action detached the frame (crashed or navigated the page away):
+            // page.raw.url() throws. Skip DOM_FROZEN so the span still ends.
           }
 
           surpriseResult = await surprise({
