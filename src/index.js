@@ -82,12 +82,23 @@ const NOISE_PATTERNS = [
   /facebook\.com\/tr/i,
 ];
 
+// Known-noisy console.error patterns that fire even on healthy pages.
+const CONSOLE_ERROR_DENYLIST = [
+  /ResizeObserver loop/,
+  /net::ERR_ABORTED/,
+];
+
 function isNoiseUrl(url) {
   if (!url) return false;
   return NOISE_PATTERNS.some((re) => re.test(url));
 }
 
-function pageEventsToHardSignals(events) {
+function isFirstPartyConsoleError(event, targetOrigin) {
+  if (!event.url) return true; // inline script — treat as first-party
+  try { return new URL(event.url).origin === targetOrigin; } catch { return false; }
+}
+
+function pageEventsToHardSignals(events, targetOrigin) {
   const out = [];
   const evidence = [];
   for (const e of events) {
@@ -100,9 +111,29 @@ function pageEventsToHardSignals(events) {
     } else if ((e.type === 'HTTP_4XX' || e.type === 'REQUEST_FAILED') && !isNoiseUrl(e.url)) {
       out.push('ASSET_4XX');
       evidence.push({ signal: 'ASSET_4XX', detail: `${e.status ?? 'fail'} ${e.url}` });
+    } else if (e.type === 'CONSOLE_ERROR') {
+      const noisy = CONSOLE_ERROR_DENYLIST.some((re) => re.test(e.message));
+      if (!noisy && isFirstPartyConsoleError(e, targetOrigin)) {
+        out.push('CONSOLE_ERROR');
+        evidence.push({ signal: 'CONSOLE_ERROR', detail: e.message.slice(0, 200) });
+      }
     }
   }
   return { signals: out, evidence };
+}
+
+async function checkDomFrozen(page) {
+  try {
+    return await page.raw.evaluate(() => {
+      const body = document.body;
+      if (!body || body.children.length === 0) return true;
+      const hasText = body.textContent.trim().length > 0;
+      const hasMedia = body.querySelector('img, svg, canvas, video, iframe') !== null;
+      return !hasText && !hasMedia;
+    });
+  } catch {
+    return false;
+  }
 }
 
 async function main() {
@@ -122,6 +153,9 @@ async function main() {
   });
 
   breadcrumbs.record('run.start', `run ${runId} seed=${seed} target=${config.target.url}`);
+
+  let targetOrigin = '';
+  try { targetOrigin = new URL(config.target.url).origin; } catch { /* invalid url */ }
 
   const rng = seedrandom(String(seed));
   const browser = await createBrowser({
@@ -219,9 +253,17 @@ async function main() {
           const newEvents = page.events.slice(beforeEvents);
           const observed = await snapshotPage(page.raw).catch(() => null);
           const { signals: hardSignals, evidence: hardEvidence } =
-            pageEventsToHardSignals(newEvents);
+            pageEventsToHardSignals(newEvents, targetOrigin);
           hardEvidenceOuter = hardEvidence;
           if (result.latencyMs > config.run.thresholdMs) hardSignals.push('PERF_BREACH');
+
+          const frozenUrl = page.raw.url();
+          if (frozenUrl && frozenUrl !== 'about:blank' && frozenUrl !== '') {
+            if (await checkDomFrozen(page)) {
+              hardSignals.push('DOM_FROZEN');
+              hardEvidence.push({ signal: 'DOM_FROZEN', detail: `empty body at ${frozenUrl}` });
+            }
+          }
 
           surpriseResult = await surprise({
             prediction,
