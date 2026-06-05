@@ -38,6 +38,10 @@ traces/
 # localStorage from prior runs — never commit, it leaks session tokens.
 .puppeteer-data/
 
+# Playwright storageState dumped by scripts/save-auth.mjs. Holds live session
+# cookies + localStorage — never commit, it leaks session tokens.
+auth-state.json
+
 # OS
 .DS_Store
 .DS_Store?

@@ -7,6 +7,7 @@ const REQUIRED = {
 
 const ALLOWED_GRANULARITIES = new Set(['fine', 'medium', 'coarse']);
 const ALLOWED_OTEL_EXPORTERS = new Set(['file', 'otlp', 'both']);
+const ALLOWED_ENGINES = new Set(['puppeteer', 'playwright']);
 
 export function validate(config) {
   if (!config || typeof config !== 'object') {
@@ -108,6 +109,14 @@ export function validate(config) {
         throw new Error(`config: auth.localStorage["${k}"] must be a string`);
       }
     }
+  }
+
+  if (config.browser?.engine !== undefined && !ALLOWED_ENGINES.has(config.browser.engine)) {
+    throw new Error(`config: browser.engine must be one of ${[...ALLOWED_ENGINES].join(', ')}`);
+  }
+
+  if (config.browser?.storageState !== undefined && typeof config.browser.storageState !== 'string') {
+    throw new Error('config: browser.storageState must be a string path if provided');
   }
 
   if (config.auth?.persistSession !== undefined && typeof config.auth.persistSession !== 'boolean') {

@@ -5,6 +5,10 @@
 # Read docs/CONFIG_GUIDE.md for a field-by-field walkthrough with examples.
 # Read docs/HOW_IT_WORKS.md for the narrative explanation of expectations & surprise.
 
+browser:
+  engine: puppeteer        # puppeteer | playwright
+  # storageState: auth-state.json  # playwright only — run scripts/save-auth.mjs first
+
 target:
   url: https://adrianolm.com
   allowedDomains:
