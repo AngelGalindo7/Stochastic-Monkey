@@ -2,6 +2,7 @@ import 'dotenv/config';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import seedrandom from 'seedrandom';
 
 import { loadConfig } from './config/loader.js';
@@ -30,7 +31,7 @@ import { checkBrokenImages } from './agent/oracles/structural.js';
 import { checkAuthzReplay } from './agent/oracles/authzReplay.js';
 import { sharedJarClient, isolatedClient } from './agent/apiClient.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname).replace(/^\//, ''), '..');
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs(argv) {
   const out = { configPath: 'config.yaml' };
