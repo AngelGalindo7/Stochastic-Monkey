@@ -25,9 +25,22 @@ export function sharedJarClient(page) {
   };
 }
 
+/**
+ * Creates an isolated Playwright request context for cross-identity oracle replays.
+ * The context holds open a browser-level HTTP jar — callers MUST close it when done.
+ *
+ * @example
+ * const client = await isolatedClient(storageStatePath);
+ * try {
+ *   const result = await client.fetch(url);
+ * } finally {
+ *   await client.close();
+ * }
+ */
 export async function isolatedClient(storageStatePath) {
   const contextOptions = storageStatePath ? { storageState: storageStatePath } : {};
   const ctx = await playwrightRequest.newContext(contextOptions);
+  let _disposed = false;
 
   return {
     async fetch(url, options = {}) {
@@ -35,6 +48,8 @@ export async function isolatedClient(storageStatePath) {
       return parseResponse(response);
     },
     async close() {
+      if (_disposed) return;
+      _disposed = true;
       await ctx.dispose();
     },
   };
