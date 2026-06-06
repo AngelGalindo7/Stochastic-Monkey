@@ -83,3 +83,29 @@ function pruneSemanticTree(node) {
   if (children.length) out.children = children;
   return out;
 }
+
+// Enumerate file inputs so the UPLOAD action can target them. Runs in-page via
+// evaluate(), which is identical on Puppeteer and Playwright, so it is
+// engine-agnostic. Lightpanda has no upload surface — return empty.
+export async function getFileInputs(page) {
+  if (page._isLightpanda) return [];
+  try {
+    return await page.evaluate(() => {
+      const out = [];
+      const inputs = document.querySelectorAll('input[type="file"]');
+      inputs.forEach((el, idx) => {
+        let selector;
+        if (el.id) selector = `#${CSS.escape(el.id)}`;
+        else if (el.getAttribute('data-testid'))
+          selector = `[data-testid="${el.getAttribute('data-testid')}"]`;
+        else if (el.name)
+          selector = `input[type="file"][name="${CSS.escape(el.name)}"]`;
+        else selector = `input[type="file"]:nth-of-type(${idx + 1})`;
+        out.push({ selector, accept: el.accept || '', multiple: !!el.multiple });
+      });
+      return out;
+    });
+  } catch {
+    return [];
+  }
+}
