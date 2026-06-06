@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { attachNetworkEvents } from './network.js';
 
 // Playwright launcher, shaped to be a drop-in peer of launchPuppeteer:
 // it returns the same { kind, raw, newPage, close } contract the
@@ -24,6 +25,12 @@ import { chromium } from 'playwright';
 //      Those are Puppeteer Page methods; in Playwright cookies live on the
 //      context. The compatibility shim below re-exposes both on the page so the
 //      existing auth block in index.js runs unchanged.
+//   3. Accessibility API: Playwright (>=1.55) REMOVED page.accessibility, but
+//      a11yTree.js calls page.accessibility.snapshot() every step. The shim
+//      below rebuilds an equivalent { role, name, value, children } tree from
+//      CDP Accessibility.getFullAXTree — which carries the identical AX role
+//      vocabulary Puppeteer's snapshot() is itself built from — so perception,
+//      state abstraction, and action sampling run engine-agnostic.
 export async function launchPlaywright({ headful = false, userDataDir, storageState } = {}) {
   const args = ['--no-sandbox', '--disable-setuid-sandbox'];
   const viewport = { width: 1280, height: 800 };
@@ -45,33 +52,6 @@ export async function launchPlaywright({ headful = false, userDataDir, storageSt
     });
   }
 
-  function attachEvents(page) {
-    const events = [];
-    page.on('pageerror', (err) =>
-      events.push({ type: 'PAGEERROR', message: err.message, stack: err.stack }),
-    );
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') {
-        events.push({ type: 'CONSOLE_ERROR', message: msg.text() });
-      }
-    });
-    page.on('requestfailed', (req) =>
-      events.push({
-        type: 'REQUEST_FAILED',
-        url: req.url(),
-        reason: req.failure()?.errorText,
-      }),
-    );
-    page.on('response', (res) => {
-      const status = res.status();
-      if (status < 400) return;
-      const resourceType = res.request()?.resourceType?.() ?? 'other';
-      const type = status >= 500 ? 'HTTP_5XX' : 'HTTP_4XX';
-      events.push({ type, url: res.url(), status, resourceType });
-    });
-    return events;
-  }
-
   // Puppeteer-API compatibility shim: cookies are a context-level concept in
   // Playwright, but index.js drives them through page.setCookie / page.cookies.
   // Re-expose both on the page, translating the varargs/array signature
@@ -81,13 +61,54 @@ export async function launchPlaywright({ headful = false, userDataDir, storageSt
     page.cookies = (...urls) => context.cookies(urls.length ? urls : undefined);
   }
 
+  // Rebuild the flat CDP AXNode list into the nested { role, name, value,
+  // children } shape Puppeteer's accessibility.snapshot() returns. CDP uses the
+  // same AX role strings (RootWebArea / heading / link / StaticText / ...), so
+  // the pruned tree, its hash, and the sampled actions match the Puppeteer path.
+  function axNodesToTree(nodes) {
+    const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+    const childIds = new Set();
+    for (const n of nodes) for (const id of n.childIds ?? []) childIds.add(id);
+    const root = nodes.find((n) => !childIds.has(n.nodeId)) ?? nodes[0];
+
+    function build(n) {
+      if (!n) return null;
+      const role = n.role?.value ?? 'none';
+      const name = n.name?.value ?? '';
+      const value = n.value?.value;
+      const children = (n.childIds ?? [])
+        .map((id) => build(byId.get(id)))
+        .filter(Boolean);
+      const out = { role };
+      if (name) out.name = name;
+      if (typeof value === 'string' && value.length) out.value = value;
+      if (children.length) out.children = children;
+      return out;
+    }
+    return build(root);
+  }
+
+  // Accessibility shim (see caveat 3): one CDP session per page, reused across
+  // steps. Re-expose page.accessibility.snapshot() so a11yTree.js is unchanged.
+  async function attachAccessibilityShim(page) {
+    const client = await context.newCDPSession(page);
+    await client.send('Accessibility.enable');
+    page.accessibility = {
+      snapshot: async () => {
+        const { nodes } = await client.send('Accessibility.getFullAXTree');
+        return axNodesToTree(nodes);
+      },
+    };
+  }
+
   return {
     kind: 'playwright',
     raw: browser ?? context,
     async newPage() {
       const page = await context.newPage();
-      const events = attachEvents(page);
+      const events = attachNetworkEvents(page);
       attachCookieShim(page);
+      await attachAccessibilityShim(page);
       return { raw: page, events };
     },
     async close() {
