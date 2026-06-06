@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { attachNetworkEvents } from './network.js';
+import { attachNetworkEvents, attachPlaywrightCapture } from './network.js';
 
 // Playwright launcher, shaped to be a drop-in peer of launchPuppeteer:
 // it returns the same { kind, raw, newPage, close } contract the
@@ -107,9 +107,10 @@ export async function launchPlaywright({ headful = false, userDataDir, storageSt
     async newPage() {
       const page = await context.newPage();
       const events = attachNetworkEvents(page);
+      const captures = attachPlaywrightCapture(page);
       attachCookieShim(page);
       await attachAccessibilityShim(page);
-      return { raw: page, events };
+      return { raw: page, events, captures };
     },
     async close() {
       await context.close();
