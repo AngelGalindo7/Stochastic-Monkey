@@ -53,7 +53,7 @@ function forwardEventsTo(srcArr, dstArr) {
   };
 }
 
-export async function createBrowser({ engine = 'puppeteer', preferLightpanda = true, headful = false, userDataDir, storageState } = {}) {
+export async function createBrowser({ engine = 'playwright', preferLightpanda = true, headful = false, userDataDir, storageState } = {}) {
   if (engine === 'playwright') {
     return launchPlaywright({ headful, userDataDir, storageState });
   }
