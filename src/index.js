@@ -104,7 +104,7 @@ async function main() {
 
   const rng = seedrandom(String(seed));
   const persistSession = config.auth?.persistSession === true;
-  const engine = config.browser?.engine ?? 'puppeteer';
+  const engine = config.browser?.engine ?? 'playwright';
   const browser = await createBrowser({
     engine,
     preferLightpanda: engine === 'puppeteer',
@@ -389,7 +389,8 @@ async function main() {
     }
   } catch (err) {
     breadcrumbs.record('error', err.message, { stack: err.stack });
-    if (!firstBug) {
+    const tookActions = breadcrumbs.all().some((b) => b.type === 'action');
+    if (!firstBug && tookActions) {
       firstBug = await writeBugReport({
         rootDir: PROJECT_ROOT,
         bugRoot: config.triage?.bugRoot ?? 'BUG',
