@@ -1,5 +1,5 @@
 import puppeteer from 'puppeteer';
-import { attachNetworkEvents } from './network.js';
+import { attachNetworkEvents, attachPuppeteerCapture } from './network.js';
 
 export async function launchPuppeteer({ headful = false, userDataDir } = {}) {
   const browser = await puppeteer.launch({
@@ -15,7 +15,9 @@ export async function launchPuppeteer({ headful = false, userDataDir } = {}) {
     async newPage() {
       const page = await browser.newPage();
       const events = attachNetworkEvents(page);
-      return { raw: page, events };
+      const client = await page.target().createCDPSession();
+      const captures = await attachPuppeteerCapture(client);
+      return { raw: page, events, captures };
     },
     async close() {
       await browser.close();
