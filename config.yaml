@@ -6,7 +6,7 @@
 # Read docs/HOW_IT_WORKS.md for the narrative explanation of expectations & surprise.
 
 browser:
-  engine: puppeteer        # puppeteer | playwright
+  engine: playwright       # playwright | puppeteer
   # storageState: auth-state.json  # playwright only — run scripts/save-auth.mjs first
 
 target:
