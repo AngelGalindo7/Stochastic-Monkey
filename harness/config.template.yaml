@@ -1,0 +1,83 @@
+# PASSIVE mass-testing template — consumed by the harness, NOT run directly.
+# The harness clones this per target and fills in: target.url, target.allowedDomains,
+# run.seed, triage.bugRoot, and the observability paths (absolute, per-target).
+#
+# "Passive" = read-only crawl. No form payloads, no destructive macros, no auth.
+# Only the deterministic hard-signal oracles fire (HTTP 5xx / 4xx-nav / asset-4xx /
+# pageerror / DOM_FROZEN). Safe to point at third-party apps you do not own.
+
+browser:
+  engine: puppeteer        # puppeteer works headless on macOS without extra setup
+
+target:
+  url: __FILLED_BY_HARNESS__
+  allowedDomains: []       # __FILLED_BY_HARNESS__ (target host + its API/Supabase host)
+  # Never click destructive controls even if the crawl reaches them.
+  blockedSelectors:
+    - "a[href$='/logout']"
+    - "a[href*='/delete']"
+    - "a[href*='/signout']"
+    - "form[action*='delete']"
+    - "[data-destructive='true']"
+
+# No auth block — passive mass runs crawl as an anonymous stranger.
+
+run:
+  seed: 42                 # __FILLED_BY_HARNESS__
+  maxSteps: 40             # Cap per app — breadth across many targets beats depth on one.
+  humanDelayMs: 150
+  thresholdMs: 4000
+  stopOnFirstBug: false    # Survey the whole app; collect every signal.
+
+actions:
+  # PASSIVE weights: zero INPUT and UPLOAD so the crawler never types into or
+  # uploads to forms. Only read-only navigation actions remain.
+  weights:
+    CLICK: 0.45
+    INPUT: 0.0
+    UPLOAD: 0.0
+    NAVIGATION: 0.20
+    SCROLL: 0.10
+    BACK: 0.10
+    FORWARD: 0.05
+    REFRESH: 0.10
+  filesPool: []
+  dataPool: []
+
+# No destructive macros in passive mode.
+macros:
+  fireProbability: 0.0
+  list: []
+
+mcts:
+  ucbC: 1.4
+  rolloutDepth: 1
+  abstractionGranularity: medium
+
+novelty:
+  nameDenylist:
+    - "unread( messages)?"
+    - "online now"
+
+llm:
+  # LLM is not in the detection loop; detection is deterministic. Disabled for
+  # mass runs so every target is free and seed-reproducible.
+  provider: gemini
+  model: gemini-2.5-flash-lite
+  maxTokens: 200
+  temperature: 0.4
+  enabled: false
+
+observability:
+  otel:
+    enabled: true
+    exporter: file         # local JSONL only; no OTLP fan-out during mass runs
+    path: __FILLED_BY_HARNESS__   # <bugRoot>/${RUN_ID}/trace.jsonl
+  breadcrumbs:
+    enabled: true
+    path: __FILLED_BY_HARNESS__   # <bugRoot>/${RUN_ID}/breadcrumbs.jsonl
+
+triage:
+  bugRoot: __FILLED_BY_HARNESS__  # absolute per-target dir; bypasses PROJECT_ROOT
+  github:
+    enabled: false
