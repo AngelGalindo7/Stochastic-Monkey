@@ -24,8 +24,11 @@ target:
 
 run:
   seed: 42                 # __FILLED_BY_HARNESS__
-  maxSteps: 40             # Cap per app — breadth across many targets beats depth on one.
-  humanDelayMs: 150
+  # Mass-scan profile: shallow + fast so clean apps finish and exit cleanly
+  # (instead of always hitting the harness timeout). Breadth across many targets
+  # beats depth on any one. Raise for deeper single-target runs.
+  maxSteps: 20
+  humanDelayMs: 80
   thresholdMs: 4000
   stopOnFirstBug: false    # Survey the whole app; collect every signal.
 
@@ -33,14 +36,14 @@ actions:
   # PASSIVE weights: zero INPUT and UPLOAD so the crawler never types into or
   # uploads to forms. Only read-only navigation actions remain.
   weights:
-    CLICK: 0.45
+    CLICK: 0.50
     INPUT: 0.0
     UPLOAD: 0.0
-    NAVIGATION: 0.20
+    NAVIGATION: 0.25
     SCROLL: 0.10
-    BACK: 0.10
-    FORWARD: 0.05
-    REFRESH: 0.10
+    BACK: 0.08
+    FORWARD: 0.04
+    REFRESH: 0.03     # refresh just reloads — low bug yield, slow; keep rare
   filesPool: []
   dataPool: []
 

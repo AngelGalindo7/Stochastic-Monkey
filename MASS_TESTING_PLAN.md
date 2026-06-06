@@ -198,15 +198,47 @@ and the isolated `BUG/` dir.
 Proven against a known-500 page: surfaced `HTTP_5XX` (critical) + `ASSET_4XX` findings,
 correctly isolated, timeout-kill harvested partial results.
 
-## What's left in Stage 6 (next build steps)
+## Stage 6b — Batch runner (DONE)
+
+```
+node harness/run-batch.js <targets-file> [--concurrency N] [--seed N] [--timeout MS] [--deny-file PATH] [--out DIR]
+```
+
+`targets-file` is `.txt` (one URL per line) or `.jsonl`
+(`{"url","platform","supabaseUrl"}` per line, enrichment carried into the config).
+
+Built and proven:
+- **Denylist gate** (`lib/denylist.js`) — gov/military/edu/health/finance dropped
+  before spawn; `--deny-file` adds custom hosts. Verified: a `*health*` host → `skipped`.
+- **Concurrency pool** (`lib/pool.js`) — N workers, errors isolated per target.
+- **Manifest** (`lib/manifest.js`, append-only `manifest.jsonl`) — resume skips
+  settled targets. Verified: re-run → `queued=0 resumed-skip=3`.
+- **`results.jsonl`** — one normalized finding per line + a severity summary.
+
+**Status model:** `done` (exit 0) / `timeout` / `skipped` are settled (not retried);
+only `failed` (crash, non-zero exit) is retry-eligible. Timeout is settled because
+the seed is fixed → a retry is deterministic and would just time out again.
+
+## Known issue — monkey hangs on navigating clicks (affects throughput)
+
+During the 6b run, `example.com` burned the full timeout: the monkey hung on
+`step=0 CLICK on "Learn more"` (an off-domain navigating link) and never advanced.
+The harness contained it correctly (timeout → SIGKILL → partial harvest), but at
+mass scale a clean app eating the full per-target timeout is a throughput killer
+(5,600 × 80s ≈ days). **This is a monkey-level bug, not a harness bug.**
+
+Recommended fix (monkey-side, next): a **per-step watchdog** inside `index.js` that
+caps any single action+snapshot cycle (e.g. 8–10s) so a hung navigation aborts the
+step instead of the whole run. Harness-side mitigation meanwhile: a tighter
+`--timeout`.
+
+## What's left in Stage 6 / Stage 7
 
 | Step | Build | Notes |
 |---|---|---|
-| 6b | **Batch runner** over `targets.jsonl` | wrap `run-one` logic in a queue |
-| 6c | **Concurrency pool** (N workers) + per-host token-bucket rate limit | start N=4–8 |
-| 6d | **Manifest** (`manifest.jsonl`) for resume/idempotency | skip `done`, retry `failed` once |
-| 6e | **Denylist gate** (Stage 0) applied before spawn | gov/health/edu/finance → `skipped` |
-| 6f | **`results.jsonl` aggregation** (Stage 7 seed) | one normalized row per finding |
+| 6c | **Per-host token-bucket rate limit** | politeness for shared apex infra (`*.lovable.app`) |
+| 6d | **Monkey per-step watchdog** | fixes the hang above; biggest throughput win |
+| 7  | **Aggregation/report** over `results.jsonl` | dedupe cross-target, per-platform dashboard |
 
 ## Note: master breakage fixed on this branch to unblock
 
