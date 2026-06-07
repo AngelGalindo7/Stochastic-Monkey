@@ -24,11 +24,12 @@ import { harvest } from './lib/harvest.js';
 import { makeDenylist } from './lib/denylist.js';
 import { loadManifest, appendRow, isSettled } from './lib/manifest.js';
 import { runPool } from './lib/pool.js';
+import { makeRateLimiter, hostOf } from './lib/rateLimiter.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs(argv) {
-  const out = { concurrency: 4, seed: 42, timeout: 150000, denyFile: null, outDir: 'runs' };
+  const out = { concurrency: 4, seed: 42, timeout: 150000, denyFile: null, outDir: 'runs', rateMs: 1000 };
   out.targetsFile = argv[2];
   for (let i = 3; i < argv.length; i++) {
     const a = argv[i];
@@ -37,6 +38,7 @@ function parseArgs(argv) {
     else if (a === '--timeout') out.timeout = Number(argv[++i]);
     else if (a === '--deny-file') out.denyFile = argv[++i];
     else if (a === '--out') out.outDir = argv[++i];
+    else if (a === '--rate-ms') out.rateMs = Number(argv[++i]);
   }
   return out;
 }
@@ -62,7 +64,7 @@ function loadTargets(file) {
 
 const args = parseArgs(process.argv);
 if (!args.targetsFile) {
-  console.error('usage: node harness/run-batch.js <targets-file> [--concurrency N] [--seed N] [--timeout MS] [--deny-file PATH] [--out DIR]');
+  console.error('usage: node harness/run-batch.js <targets-file> [--concurrency N] [--seed N] [--timeout MS] [--rate-ms MS] [--deny-file PATH] [--out DIR]');
   process.exit(1);
 }
 
@@ -105,8 +107,10 @@ function nowStamp() {
 }
 
 console.log(`[batch] targets=${targets.length} queued=${work.length} resumed-skip=${skippedDone} denied=${skippedDeny}`);
-console.log(`[batch] concurrency=${args.concurrency} seed=${args.seed} timeout=${args.timeout}ms`);
+console.log(`[batch] concurrency=${args.concurrency} seed=${args.seed} timeout=${args.timeout}ms rate=${args.rateMs}ms/host`);
 console.log(`[batch] out=${path.relative(PROJECT_ROOT, outRoot)}`);
+
+const rateLimit = makeRateLimiter(args.rateMs);
 
 let done = 0;
 const totalFindings = { count: 0, bySeverity: {} };
@@ -114,6 +118,7 @@ const totalFindings = { count: 0, bySeverity: {} };
 await runPool(
   work,
   async (t) => {
+    await rateLimit(hostOf(t.url)); // politeness: space repeat hits on one origin
     const runDir = path.join(outRoot, t.slug);
     appendRow(manifestPath, { slug: t.slug, url: t.url, status: 'running', ts: nowStamp() });
 
