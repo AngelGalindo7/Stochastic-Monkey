@@ -5,6 +5,7 @@ import { isSettled } from '../../harness/lib/manifest.js';
 import { summarize, renderReport } from '../../harness/lib/aggregate.js';
 import { hostOf } from '../../harness/lib/rateLimiter.js';
 import { fingerprint, decodeJwtPayload, extractScriptSrcs } from '../../harness/lib/fingerprint.js';
+import { parseCrtSh, crtShUrl } from '../../harness/lib/discover.js';
 
 // Build a fake Supabase anon JWT (header.payload.signature, base64url).
 function fakeJwt(payload) {
@@ -140,5 +141,27 @@ describe('fingerprint', () => {
   it('extracts and resolves script srcs', () => {
     const srcs = extractScriptSrcs('<script src="/assets/index-abc.js"></script><script src="https://cdn.x/y.js"></script>', 'https://app.lovable.app/');
     expect(srcs).toEqual(['https://app.lovable.app/assets/index-abc.js', 'https://cdn.x/y.js']);
+  });
+});
+
+describe('discover (crt.sh)', () => {
+  it('builds the crt.sh query url', () => {
+    expect(crtShUrl('lovable.app')).toBe('https://crt.sh/?q=%25.lovable.app&output=json');
+  });
+
+  it('parses entries: dedupes, drops wildcards, scopes to apex', () => {
+    const entries = [
+      { name_value: 'a.lovable.app\n*.lovable.app' },
+      { name_value: 'a.lovable.app' }, // dup
+      { name_value: 'b.lovable.app' },
+      { common_name: 'c.lovable.app' },
+      { name_value: 'evil.example.com' }, // out of scope
+      { name_value: 'not_a_host' }, // junk
+    ];
+    expect(parseCrtSh(entries, 'lovable.app')).toEqual([
+      'a.lovable.app',
+      'b.lovable.app',
+      'c.lovable.app',
+    ]);
   });
 });
