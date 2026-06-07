@@ -25,7 +25,7 @@ export function isSpaCrash(err) {
 }
 
 async function tryLaunchLightpanda(opts) {
-  if (process.platform === 'win32' || !process.env.LIGHTPANDA_CDP_URL) return null;
+  if (process.platform === 'win32' && !process.env.LIGHTPANDA_CDP_URL) return null;
   try {
     return await launchLightpanda(opts);
   } catch (err) {
@@ -53,7 +53,7 @@ function forwardEventsTo(srcArr, dstArr) {
   };
 }
 
-export async function createBrowser({ engine = 'puppeteer', preferLightpanda = true, headful = false, userDataDir, storageState } = {}) {
+export async function createBrowser({ engine = 'playwright', preferLightpanda = true, headful = false, userDataDir, storageState } = {}) {
   if (engine === 'playwright') {
     return launchPlaywright({ headful, userDataDir, storageState });
   }
@@ -66,7 +66,7 @@ export async function createBrowser({ engine = 'puppeteer', preferLightpanda = t
 
   let fellBack = false;
 
-  async function fallbackToPuppeteer(reason, pageRef, eventsBacking) {
+  async function fallbackToPuppeteer(reason, pageRef, eventsBacking, capturesBacking) {
     if (fellBack) return false;
     fellBack = true;
     console.warn(`[browser] lightpanda SPA fallback -> puppeteer (reason=${reason})`);
@@ -75,6 +75,7 @@ export async function createBrowser({ engine = 'puppeteer', preferLightpanda = t
     const fresh = await active.newPage();
     pageRef.current = fresh.raw;
     forwardEventsTo(fresh.events, eventsBacking);
+    forwardEventsTo(fresh.captures, capturesBacking);
     if (pageRef.lastUrl && pageRef.lastUrl !== 'about:blank') {
       await fresh.raw
         .goto(pageRef.lastUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })
@@ -91,6 +92,7 @@ export async function createBrowser({ engine = 'puppeteer', preferLightpanda = t
       const p = await active.newPage();
       const pageRef = { current: p.raw, lastUrl: '' };
       const eventsBacking = p.events;
+      const capturesBacking = p.captures ?? [];
 
       const rawProxy = new Proxy(
         {},
@@ -122,6 +124,7 @@ export async function createBrowser({ engine = 'puppeteer', preferLightpanda = t
                       `${String(prop)}:${err.message}`,
                       pageRef,
                       eventsBacking,
+                      capturesBacking,
                     ))
                   )
                     throw err;
@@ -141,6 +144,7 @@ export async function createBrowser({ engine = 'puppeteer', preferLightpanda = t
                         `${String(prop)}:${err.message}`,
                         pageRef,
                         eventsBacking,
+                        capturesBacking,
                       ))
                     )
                       throw err;
@@ -155,7 +159,7 @@ export async function createBrowser({ engine = 'puppeteer', preferLightpanda = t
         },
       );
 
-      return { raw: rawProxy, events: eventsBacking };
+      return { raw: rawProxy, events: eventsBacking, captures: capturesBacking };
     },
     async close() {
       await active.close();

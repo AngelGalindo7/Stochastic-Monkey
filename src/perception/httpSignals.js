@@ -13,41 +13,6 @@ export function isNoiseUrl(url) {
   return NOISE_PATTERNS.some((re) => re.test(url));
 }
 
-// Known-noisy console.error patterns that fire even on healthy pages.
-// Covers: browser quirks, extension-injected errors, and inline analytics
-// scripts (GTM, ad pixels) that run in the first-party origin but produce
-// noise unrelated to the app under test.
-export const CONSOLE_ERROR_DENYLIST = [
-  /ResizeObserver loop/,
-  /net::ERR_ABORTED/,
-  // Extension errors surfaced with or without an extension URL
-  /chrome-extension:\/\//,
-  /moz-extension:\/\//,
-  // GTM / analytics / ad-pixel noise injected as inline scripts
-  /googletagmanager/i,
-  /google-analytics/i,
-  /doubleclick/i,
-  /\bfbq\s*is not defined\b/,
-  // Chrome [Violation] messages (long task, forced style recalc) logged as errors
-  /\[Violation\]/,
-  /Intervention:/,
-];
-
-// Returns false for errors whose source URL is a browser extension, to avoid
-// treating extension-injected errors as app signal.
-export function isFirstPartyConsoleError(event, targetOrigin) {
-  const { url } = event;
-  if (url) {
-    if (url.startsWith('chrome-extension://') || url.startsWith('moz-extension://')) {
-      return false;
-    }
-    try { return new URL(url).origin === targetOrigin; } catch { return false; }
-  }
-  // Inline scripts have no URL. Treat as first-party; the denylist filters
-  // analytics and extension patterns that don't carry a source URL.
-  return true;
-}
-
 // Static sub-resources whose 4xx is a broken-asset bug (missing image, dead
 // stylesheet). Distinguished from API (xhr/fetch) 4xx, which is usually correct
 // rejection of bad input and must NOT auto-fire a bug.
@@ -57,7 +22,7 @@ const ASSET_RESOURCE_TYPES = new Set(['image', 'stylesheet', 'font', 'media', 's
 // drive this — a 5xx is always a server fault; a 4xx is classified by the
 // request it answered: navigation (broken route) and assets are bugs, API
 // validation 4xx is recorded as evidence only.
-export function pageEventsToHardSignals(events, targetOrigin = '') {
+export function pageEventsToHardSignals(events) {
   const out = [];
   const evidence = [];
   for (const e of events) {
@@ -81,12 +46,6 @@ export function pageEventsToHardSignals(events, targetOrigin = '') {
     } else if (e.type === 'REQUEST_FAILED' && !isNoiseUrl(e.url)) {
       out.push('ASSET_4XX');
       evidence.push({ signal: 'REQUEST_FAILED', detail: `fail ${e.url}` });
-    } else if (e.type === 'CONSOLE_ERROR') {
-      const noisy = CONSOLE_ERROR_DENYLIST.some((re) => re.test(e.message));
-      if (!noisy && isFirstPartyConsoleError(e, targetOrigin)) {
-        out.push('CONSOLE_ERROR');
-        evidence.push({ signal: 'CONSOLE_ERROR', detail: e.message.slice(0, 200) });
-      }
     }
   }
   return { signals: out, evidence };

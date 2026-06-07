@@ -3,6 +3,7 @@ import { runInput } from './input.js';
 import { runNavigate } from './navigate.js';
 import { runScroll } from './scroll.js';
 import { runBack, runForward, runRefresh } from './history.js';
+import { runUpload } from './upload.js';
 
 const HANDLERS = {
   CLICK: runClick,
@@ -12,9 +13,10 @@ const HANDLERS = {
   BACK: runBack,
   FORWARD: runForward,
   REFRESH: runRefresh,
+  UPLOAD: runUpload,
 };
 
-export async function runMacro({ macro, page, config, rng, breadcrumbs }) {
+export async function runMacro({ macro, page, config, rng, breadcrumbs, projectRoot }) {
   const stepResults = [];
   let success = true;
   for (const step of macro.steps) {
@@ -24,7 +26,11 @@ export async function runMacro({ macro, page, config, rng, breadcrumbs }) {
       success = false;
       continue;
     }
-    const target = step.target ? { role: step.targetRole ?? 'button', name: step.target } : null;
+    const target = step.target
+      ? step.type === 'UPLOAD'
+        ? { selector: step.target }
+        : { role: step.targetRole ?? 'button', name: step.target, selector: step.selector }
+      : null;
     const args = {
       page,
       target,
@@ -32,6 +38,8 @@ export async function runMacro({ macro, page, config, rng, breadcrumbs }) {
       rng,
       allowedDomains: config.target.allowedDomains,
       currentUrl: page.raw.url(),
+      filesPool: config.actions?.filesPool ?? [],
+      projectRoot,
     };
     const r = await handler(args);
     stepResults.push({ type: step.type, ...r });
@@ -45,6 +53,8 @@ export async function runMacro({ macro, page, config, rng, breadcrumbs }) {
       success = false;
       break;
     }
+    // SPAs hydrate after domcontentloaded; wait for net-idle so the next step doesn't race the React mount.
+    await page.raw.waitForNetworkIdle?.({ idleTime: 300, timeout: 2000 })?.catch(() => {});
     if (step.delayMs) {
       await new Promise((res) => setTimeout(res, step.delayMs));
     }
