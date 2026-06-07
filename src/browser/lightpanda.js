@@ -343,7 +343,7 @@ function propValue(node, name) {
 }
 
 export async function launchLightpanda(_opts = {}) {
-  if (process.platform === 'win32') {
+  if (process.platform === 'win32' && !process.env.LIGHTPANDA_CDP_URL) {
     throw new NotImplementedError(
       'Lightpanda has no native Windows build (DECISION_LOG 002).',
       '002',
