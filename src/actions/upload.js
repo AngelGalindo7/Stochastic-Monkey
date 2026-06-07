@@ -24,13 +24,7 @@ export async function runUpload({ page, target, filesPool, rng, projectRoot }) {
     if (!handle) {
       return { success: false, error: `no element for ${target.selector}`, latencyMs: Date.now() - start };
     }
-    // Engine-agnostic file set: Playwright's ElementHandle exposes
-    // setInputFiles; Puppeteer's exposes uploadFile. Prefer whichever exists.
-    if (typeof handle.setInputFiles === 'function') {
-      await handle.setInputFiles(filePath);
-    } else {
-      await handle.uploadFile(filePath);
-    }
+    await handle.uploadFile(filePath);
     return { success: true, value: pick.path, latencyMs: Date.now() - start };
   } catch (err) {
     return { success: false, error: err.message, latencyMs: Date.now() - start };

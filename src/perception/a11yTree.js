@@ -59,6 +59,31 @@ export async function snapshotPage(page) {
   return pruneLayout(raw);
 }
 
+export async function getFileInputs(page) {
+  if (page._isLightpanda) return [];
+  try {
+    return await page.evaluate(() => {
+      const out = [];
+      const inputs = document.querySelectorAll('input[type="file"]');
+      inputs.forEach((el, idx) => {
+        let selector;
+        if (el.id) selector = `#${CSS.escape(el.id)}`;
+        else if (el.getAttribute('data-testid')) selector = `[data-testid="${el.getAttribute('data-testid')}"]`;
+        else if (el.name) selector = `input[type="file"][name="${CSS.escape(el.name)}"]`;
+        else selector = `input[type="file"]:nth-of-type(${idx + 1})`;
+        out.push({
+          selector,
+          accept: el.accept || '',
+          multiple: !!el.multiple,
+        });
+      });
+      return out;
+    });
+  } catch {
+    return [];
+  }
+}
+
 async function snapshotLightpanda(cdp) {
   const { tree } = await cdp.send('LP.getSemanticTree');
   return pruneSemanticTree(tree);
