@@ -232,13 +232,49 @@ caps any single action+snapshot cycle (e.g. 8–10s) so a hung navigation aborts
 step instead of the whole run. Harness-side mitigation meanwhile: a tighter
 `--timeout`.
 
-## What's left in Stage 6 / Stage 7
+## Stage 6c / 6d / 7 — DONE
 
-| Step | Build | Notes |
+- **6d Monkey per-step watchdog** (`src/index.js`, `run.stepTimeoutMs`, default 10s):
+  races each step body and breaks cleanly when a step hangs (e.g. a navigating
+  click that destroys the page context). Verified: `example.com` went from
+  full-timeout hang → clean `exit 0`. Biggest throughput win.
+- **6c Per-host rate limiter** (`lib/rateLimiter.js`, `--rate-ms`, default 1000ms):
+  spaces repeat hits on one origin; keyed on full host so distinct apps on a
+  shared apex run in parallel.
+- **7 Aggregation/report** (`lib/aggregate.js` + `aggregate.js`):
+  `node harness/aggregate.js [--out DIR]` reads `results.jsonl` + `manifest.jsonl`
+  → `report.md` (severity / signal / platform / status tables) + a
+  `disclosure-queue.jsonl` of critical+high findings. Signals are deduped by
+  distinct affected targets.
+
+Harness pure-logic is unit-tested (`tests/unit/harness.test.js`): slug, denylist,
+manifest settling, rate-limit host key, and aggregation. Full suite: 110 passing.
+
+## Pipeline now (Stages 6 + 7 complete)
+
+```
+targets.{txt,jsonl}
+   └─ run-batch.js  ──► denylist gate ──► pool(N) ──► per-host rate limit
+                                              │
+                                        gen config (passive, absolute bugRoot)
+                                              │
+                                        run monkey (per-step watchdog)
+                                              │
+                                        harvest BUG/ ──► results.jsonl + manifest.jsonl
+   └─ aggregate.js  ──► report.md + disclosure-queue.jsonl
+```
+
+## What's left (upstream funnel — Stages 1–5)
+
+The runner is done; what remains is **filling `targets.jsonl`** (the acquisition
+funnel) so it can be pointed at real vibe-coded apps instead of a hand-made list:
+
+| Stage | Build | Notes |
 |---|---|---|
-| 6c | **Per-host token-bucket rate limit** | politeness for shared apex infra (`*.lovable.app`) |
-| 6d | **Monkey per-step watchdog** | fixes the hang above; biggest throughput win |
-| 7  | **Aggregation/report** over `results.jsonl` | dedupe cross-target, per-platform dashboard |
+| 3 | **Liveness filter** (`httpx`-style probe) | keep 2xx/3xx, drop landing/parked |
+| 4 | **Vibe-code fingerprinter** | Supabase anon JWT / PostgREST / build artifacts → platform tag |
+| 1–2 | **Acquisition + subdomain enum** | crt.sh + platform directories + subfinder |
+| 5 | **Enrichment** | extract Supabase URL/anon-key → carried into config |
 
 ## Note: master breakage fixed on this branch to unblock
 
