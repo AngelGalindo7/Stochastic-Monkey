@@ -1,0 +1,7 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <!-- Single button; clicking it wipes the body, producing the empty-root the DOM_FROZEN check catches. -->
+  <button onclick="document.body.innerHTML = ''">Freeze</button>
+</body>
+</html>

@@ -102,6 +102,9 @@ async function main() {
 
   breadcrumbs.record('run.start', `run ${runId} seed=${seed} target=${config.target.url}`);
 
+  let targetOrigin = '';
+  try { targetOrigin = new URL(config.target.url).origin; } catch { /* invalid url */ }
+
   const rng = seedrandom(String(seed));
   const persistSession = config.auth?.persistSession === true;
   const engine = config.browser?.engine ?? 'playwright';
@@ -326,7 +329,7 @@ async function main() {
             ? clusterId(observed, config.mcts.abstractionGranularity)
             : null;
           const { signals: hardSignals, evidence: hardEvidence } =
-            pageEventsToHardSignals(newEvents);
+            pageEventsToHardSignals(newEvents, targetOrigin);
           hardEvidenceOuter = hardEvidence;
           if (result.latencyMs > config.run.thresholdMs) hardSignals.push('PERF_BREACH');
 
