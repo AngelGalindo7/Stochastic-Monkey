@@ -264,17 +264,29 @@ targets.{txt,jsonl}
    └─ aggregate.js  ──► report.md + disclosure-queue.jsonl
 ```
 
-## What's left (upstream funnel — Stages 1–5)
+## Upstream funnel (Stages 1–5) — DONE
 
-The runner is done; what remains is **filling `targets.jsonl`** (the acquisition
-funnel) so it can be pointed at real vibe-coded apps instead of a hand-made list:
-
-| Stage | Build | Notes |
+| Stage | Built | Where |
 |---|---|---|
-| 3 | **Liveness filter** (`httpx`-style probe) | keep 2xx/3xx, drop landing/parked |
-| 4 | **Vibe-code fingerprinter** | Supabase anon JWT / PostgREST / build artifacts → platform tag |
-| 1–2 | **Acquisition + subdomain enum** | crt.sh + platform directories + subfinder |
-| 5 | **Enrichment** | extract Supabase URL/anon-key → carried into config |
+| 1–2 | **Acquisition + subdomain enum** via crt.sh (CT logs), graceful on 5xx | `discover.js`, `lib/discover.js` |
+| 3 | **Liveness filter** — drop non-2xx/3xx dead hosts | `classify.js` |
+| 4 | **Vibe-code fingerprinter** — Supabase anon JWT / PostgREST / platform markers → confidence + platform tag | `lib/fingerprint.js` |
+| 5 | **Enrichment** — Supabase URL/anon-key extracted, carried into the generated config | `lib/fingerprint.js` → `classify.js` |
+
+## Full pipeline — COMPLETE
+
+```
+discover ──► candidates.txt ──► classify ──► targets.jsonl ──► run-batch ──► results.jsonl ──► aggregate ──► report.md
+ (Stages 1-2)                  (Stages 3-5)                   (Stage 6)                       (Stage 7)
+```
+
+See `harness/README.md` for the command-by-command walkthrough. All pure logic is
+unit-tested (`tests/unit/harness.test.js`); full suite **118 passing**.
+
+Everything runs in **passive mode** (read-only oracles, denylist, rate limits,
+per-step + per-target timeouts, disclosure queue). Active testing (form payloads,
+auth/IDOR macros) remains deferred behind an ownership allowlist — the documented
+v1 boundary.
 
 ## Note: master breakage fixed on this branch to unblock
 
