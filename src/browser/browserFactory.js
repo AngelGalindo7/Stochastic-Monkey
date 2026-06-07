@@ -45,7 +45,10 @@ async function tryLaunchLightpanda(opts) {
 // reference, so we shadow that array's `push` to fan out into the original
 // backing array — without this, post-fallback events would silently land in a
 // dead array and the surprise pipeline would miss real signal.
-function forwardEventsTo(srcArr, dstArr) {
+// @internal — exported for unit tests only. Must not be called twice on the
+// same srcArr: each call wraps push again, causing each item to be forwarded
+// N times after N calls.
+export function forwardEventsTo(srcArr, dstArr) {
   const origPush = srcArr.push.bind(srcArr);
   srcArr.push = function (...items) {
     for (const it of items) dstArr.push(it);

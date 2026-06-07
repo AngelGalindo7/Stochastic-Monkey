@@ -50,6 +50,49 @@ describe('httpSignals.pageEventsToHardSignals — HTTP-code-driven oracle', () =
     ]);
     expect(signals).toContain('ASSET_4XX');
   });
+
+  // Regression: fix(browser puppeteer) had to add resourceType capture because response events were missing it. Without resourceType every 4xx fell to evidence-only — real asset/nav bugs were silently suppressed. These tests show the classification branches by varying resourceType on identical events.
+  it('4xx image URL: resourceType=image fires ASSET_4XX; resourceType=undefined goes to evidence only', () => {
+    const { signals: withType } = pageEventsToHardSignals([
+      { type: 'HTTP_4XX', url: 'http://app/logo.png', status: 404, resourceType: 'image' },
+    ]);
+    expect(withType).toContain('ASSET_4XX');
+
+    const { signals: withoutType, evidence } = pageEventsToHardSignals([
+      { type: 'HTTP_4XX', url: 'http://app/logo.png', status: 404, resourceType: undefined },
+    ]);
+    expect(withoutType).toHaveLength(0);
+    expect(evidence.some((e) => e.signal === 'API_4XX')).toBe(true);
+  });
+
+  it('4xx page URL: resourceType=document fires HTTP_4XX_NAV; resourceType=undefined goes to evidence only', () => {
+    const { signals: withType } = pageEventsToHardSignals([
+      { type: 'HTTP_4XX', url: 'http://app/page', status: 404, resourceType: 'document' },
+    ]);
+    expect(withType).toContain('HTTP_4XX_NAV');
+
+    const { signals: withoutType } = pageEventsToHardSignals([
+      { type: 'HTTP_4XX', url: 'http://app/page', status: 404, resourceType: undefined },
+    ]);
+    expect(withoutType).toHaveLength(0);
+  });
+
+  it('5xx is always a hard signal regardless of resourceType', () => {
+    const { signals: withType } = pageEventsToHardSignals([
+      { type: 'HTTP_5XX', url: 'http://app/api', status: 503, resourceType: 'fetch' },
+    ]);
+    expect(withType).toContain('HTTP_5XX');
+
+    const { signals: withoutType } = pageEventsToHardSignals([
+      { type: 'HTTP_5XX', url: 'http://app/api', status: 503, resourceType: undefined },
+    ]);
+    expect(withoutType).toContain('HTTP_5XX');
+
+    const { signals: asDocument } = pageEventsToHardSignals([
+      { type: 'HTTP_5XX', url: 'http://app/page', status: 503, resourceType: 'document' },
+    ]);
+    expect(asDocument).toContain('HTTP_5XX');
+  });
 });
 
 describe('httpSignals.isNoiseUrl', () => {
