@@ -4,6 +4,13 @@ import { makeDenylist } from '../../harness/lib/denylist.js';
 import { isSettled } from '../../harness/lib/manifest.js';
 import { summarize, renderReport } from '../../harness/lib/aggregate.js';
 import { hostOf } from '../../harness/lib/rateLimiter.js';
+import { fingerprint, decodeJwtPayload, extractScriptSrcs } from '../../harness/lib/fingerprint.js';
+
+// Build a fake Supabase anon JWT (header.payload.signature, base64url).
+function fakeJwt(payload) {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  return `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64(payload)}.sig_${'x'.repeat(20)}`;
+}
 
 describe('slugify', () => {
   it('turns a url into a flat host slug', () => {
@@ -94,5 +101,44 @@ describe('aggregate.summarize', () => {
     expect(md).toMatch(/## Findings by severity/);
     expect(md).toMatch(/## Disclosure queue/);
     expect(md).toMatch(/HTTP_5XX/);
+  });
+});
+
+describe('fingerprint', () => {
+  it('decodes a JWT payload', () => {
+    const jwt = fakeJwt({ iss: 'supabase', ref: 'abcdefghijklmnop', role: 'anon' });
+    expect(decodeJwtPayload(jwt)).toMatchObject({ role: 'anon', ref: 'abcdefghijklmnop' });
+  });
+
+  it('detects a Supabase anon JWT and derives the project URL from ref', () => {
+    const jwt = fakeJwt({ iss: 'supabase', ref: 'abcdefghijklmnop', role: 'anon' });
+    const fp = fingerprint({ url: 'https://app.lovable.app', scripts: [`const KEY="${jwt}";`] });
+    expect(fp.signals).toContain('supabase-anon-jwt');
+    expect(fp.anonKey).toBe(jwt);
+    expect(fp.supabaseUrl).toBe('https://abcdefghijklmnop.supabase.co');
+    expect(fp.confidence).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('tags the lovable platform from markers', () => {
+    const fp = fingerprint({ url: 'https://x.lovable.app', html: '<script src="https://gptengineer.app/x.js"></script>' });
+    expect(fp.platform).toBe('lovable');
+    expect(fp.signals).toContain('marker:lovable');
+  });
+
+  it('labels a supabase-only app as supabase-app', () => {
+    const fp = fingerprint({ url: 'https://x', html: 'fetch("https://abcdefghijklmnop.supabase.co/rest/v1/users")' });
+    expect(fp.platform).toBe('supabase-app');
+    expect(fp.signals).toEqual(expect.arrayContaining(['supabase-url', 'postgrest']));
+  });
+
+  it('stays unknown + low confidence for a plain site', () => {
+    const fp = fingerprint({ url: 'https://example.com', html: '<h1>hello</h1>' });
+    expect(fp.platform).toBe('unknown');
+    expect(fp.confidence).toBe(0);
+  });
+
+  it('extracts and resolves script srcs', () => {
+    const srcs = extractScriptSrcs('<script src="/assets/index-abc.js"></script><script src="https://cdn.x/y.js"></script>', 'https://app.lovable.app/');
+    expect(srcs).toEqual(['https://app.lovable.app/assets/index-abc.js', 'https://cdn.x/y.js']);
   });
 });
