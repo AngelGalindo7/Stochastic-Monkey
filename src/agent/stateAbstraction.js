@@ -24,4 +24,21 @@ export function clusterId(a11yTree, granularity = 'medium') {
   return hashSubtree(truncated);
 }
 
+// Flatten a tree into a Set of normalized "role|name" pairs. Names are run
+// through normalizeForHash so digit runs and UUIDs collapse, making the set
+// stable across cosmetic churn. Used by novelty.js to diff two states.
+export function flattenRoleNames(tree) {
+  const set = new Set();
+  const visit = (node) => {
+    if (!node || typeof node !== 'object') return;
+    if (node.role) {
+      const name = typeof node.name === 'string' ? normalizeForHash({ name: node.name }).name : '';
+      set.add(`${node.role}|${name ?? ''}`);
+    }
+    if (Array.isArray(node.children)) node.children.forEach(visit);
+  };
+  visit(tree);
+  return set;
+}
+
 export { normalizeForHash };

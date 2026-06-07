@@ -3,8 +3,8 @@ import {
   CONSOLE_ERROR_DENYLIST,
   isFirstPartyConsoleError,
   pageEventsToHardSignals,
-  checkDomFrozen,
-} from '../../src/agent/signals.js';
+} from '../../src/perception/httpSignals.js';
+import { checkDomFrozen } from '../../src/agent/signals.js';
 
 const ORIGIN = 'https://example.com';
 
@@ -80,7 +80,7 @@ describe('pageEventsToHardSignals', () => {
 
   it('emits ASSET_4XX for non-noise requests', () => {
     const { signals } = pageEventsToHardSignals(
-      [{ type: 'HTTP_4XX', status: 404, url: 'https://example.com/missing.js' }],
+      [{ type: 'HTTP_4XX', status: 404, url: 'https://example.com/missing.js', resourceType: 'script' }],
       ORIGIN,
     );
     expect(signals).toContain('ASSET_4XX');

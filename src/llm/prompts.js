@@ -23,21 +23,3 @@ export function buildPredictPrompt({ a11yTree, action, recentActions = [] }) {
     .filter(Boolean)
     .join('\n');
 }
-
-export function buildSurprisePrompt({ prediction, observed, hardSignals }) {
-  return [
-    'You are a QA evaluator. A prediction was made about a UI action. The',
-    'action ran. Score how surprising the actual result was on a 0..1 scale.',
-    '0 = exactly matched prediction. 1 = totally diverged or broke.',
-    'Reply with JSON: {"score": <number>, "reason": "<one short sentence>"}',
-    '',
-    `Prediction: ${prediction}`,
-    '',
-    'Observed (pruned tree, truncated):',
-    JSON.stringify(observed).slice(0, 4000),
-    '',
-    `Page-level signals fired: ${JSON.stringify(hardSignals)}`,
-    '',
-    'JSON:',
-  ].join('\n');
-}

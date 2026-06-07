@@ -1,10 +1,11 @@
 import puppeteer from 'puppeteer';
 
-export async function launchPuppeteer({ headful = false } = {}) {
+export async function launchPuppeteer({ headful = false, userDataDir } = {}) {
   const browser = await puppeteer.launch({
     headless: !headful,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
     defaultViewport: { width: 1280, height: 800 },
+    ...(userDataDir ? { userDataDir } : {}),
   });
 
   return {
@@ -30,8 +31,10 @@ export async function launchPuppeteer({ headful = false } = {}) {
       );
       page.on('response', (res) => {
         const status = res.status();
-        if (status >= 500) events.push({ type: 'HTTP_5XX', url: res.url(), status });
-        else if (status >= 400) events.push({ type: 'HTTP_4XX', url: res.url(), status });
+        if (status < 400) return;
+        const resourceType = res.request()?.resourceType?.() ?? 'other';
+        const type = status >= 500 ? 'HTTP_5XX' : 'HTTP_4XX';
+        events.push({ type, url: res.url(), status, resourceType });
       });
       return { raw: page, events };
     },
