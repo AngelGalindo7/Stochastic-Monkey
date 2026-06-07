@@ -51,6 +51,27 @@ export function listInteractiveNodes(tree, acc = []) {
   return acc;
 }
 
+// Query the live DOM for file inputs. Returns descriptors used by the UPLOAD
+// candidate policy. Separate from snapshotPage so it can be called without a
+// full a11y snapshot.
+export async function getFileInputs(page) {
+  return page.raw.$$eval('input[type="file"]', (els) =>
+    els.map((el, i) => ({
+      name: el.name || el.id || '',
+      accept: el.accept || '*',
+      index: i,
+      // Double-quotes in attribute values would break the selector; escape them.
+      // When both name and id are absent the bare type selector is ambiguous —
+      // use index to disambiguate at call sites.
+      selector: el.name
+        ? `input[name="${el.name.replace(/"/g, '\\"')}"]`
+        : el.id
+        ? `#${el.id}`
+        : `input[type="file"]:nth-of-type(${i + 1})`,
+    })),
+  );
+}
+
 export async function snapshotPage(page) {
   if (page._isLightpanda) {
     return snapshotLightpanda(page.cdp);
