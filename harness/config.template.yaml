@@ -30,6 +30,9 @@ run:
   maxSteps: 20
   humanDelayMs: 80
   thresholdMs: 4000
+  stepTimeoutMs: 10000     # Per-step watchdog: abort a step that hangs (e.g. a
+                           # navigating click that destroys the page context) so
+                           # one stuck app can't burn the whole per-target budget.
   stopOnFirstBug: false    # Survey the whole app; collect every signal.
 
 actions:

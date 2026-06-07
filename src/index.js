@@ -83,6 +83,23 @@ async function executeAction({ action, page, config, rng, breadcrumbs, sentinel 
   }
 }
 
+// Per-step watchdog. A single action can hang indefinitely — e.g. a CLICK that
+// triggers an off-domain navigation which destroys the execution context, after
+// which the next CDP/page call never resolves. Racing the step body against a
+// timeout lets the run abort the stuck step instead of hanging until an external
+// kill. The rejection is tagged so the loop can distinguish it from real errors.
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`watchdog: ${label} exceeded ${ms}ms`);
+      err.__watchdog = true;
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function pickMacro(macros, rng) {
   if (!macros || macros.length === 0) return null;
   const total = macros.reduce((s, m) => s + (m.weight ?? 1), 0);
@@ -231,6 +248,7 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
 
     const macroFireProb = config.macros?.fireProbability ?? 0;
     const macroList = config.macros?.list ?? [];
+    const stepTimeoutMs = config.run?.stepTimeoutMs ?? 10000;
     const recentStateIds = [];
     const noveltyDenylist = (config.novelty?.nameDenylist ?? []).map((s) => new RegExp(s, 'i'));
     let prevA11y = null;
@@ -287,7 +305,10 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
       let observedForPrev = null;
       let observedUrlForPrev = null;
 
-      await tracer.startActiveSpan(
+      let stepWatchdogFired = false;
+      try {
+        await withTimeout(
+          tracer.startActiveSpan(
         'mcts.expand',
         { attributes: { step, 'state.id': stateId, action: action.type, arm: role } },
         async (span) => {
@@ -364,7 +385,17 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           }
           span.end();
         },
-      );
+          ),
+          stepTimeoutMs,
+          `step ${step} (${action.type})`,
+        );
+      } catch (err) {
+        if (err && err.__watchdog) {
+          breadcrumbs.record('warn', `step ${step} watchdog fired: ${err.message}; ending run`);
+          break;
+        }
+        throw err;
+      }
 
       backprop(node, surpriseResult.score);
       prevA11y = observedForPrev ?? prevA11y;
