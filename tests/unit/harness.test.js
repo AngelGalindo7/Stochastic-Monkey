@@ -5,7 +5,7 @@ import { isSettled } from '../../harness/lib/manifest.js';
 import { summarize, renderReport } from '../../harness/lib/aggregate.js';
 import { hostOf } from '../../harness/lib/rateLimiter.js';
 import { fingerprint, decodeJwtPayload, extractScriptSrcs } from '../../harness/lib/fingerprint.js';
-import { parseCrtSh, crtShUrl } from '../../harness/lib/discover.js';
+import { parseCrtSh, crtShUrl, parseHackerTarget, hackerTargetUrl } from '../../harness/lib/discover.js';
 
 // Build a fake Supabase anon JWT (header.payload.signature, base64url).
 function fakeJwt(payload) {
@@ -163,5 +163,21 @@ describe('discover (crt.sh)', () => {
       'b.lovable.app',
       'c.lovable.app',
     ]);
+  });
+
+  it('builds the hackertarget url, with and without a key', () => {
+    expect(hackerTargetUrl('lovable.app')).toContain('hostsearch/?q=lovable.app');
+    expect(hackerTargetUrl('lovable.app', 'K')).toContain('apikey=K');
+  });
+
+  it('parses hackertarget CSV: takes host, scopes, drops rate-limit lines', () => {
+    const csv = [
+      'foo.lovable.app,185.41.148.1',
+      'bar.lovable.app,185.41.148.2',
+      'foo.lovable.app,185.41.148.1', // dup
+      'evil.example.com,1.2.3.4', // out of scope
+      'API count exceeded - Increase Quota with Membership', // junk line
+    ].join('\n');
+    expect(parseHackerTarget(csv, 'lovable.app')).toEqual(['bar.lovable.app', 'foo.lovable.app']);
   });
 });

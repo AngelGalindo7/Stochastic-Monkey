@@ -23,3 +23,25 @@ export function parseCrtSh(entries, apex = '') {
 export function crtShUrl(apex) {
   return `https://crt.sh/?q=${encodeURIComponent(`%.${apex}`)}&output=json`;
 }
+
+// HackerTarget hostsearch — passive DNS, returns "hostname,ip" CSV. Free tier
+// caps at ~50 results/query without a key; pass apiKey for more. Resilient when
+// crt.sh is down (different infrastructure).
+export function hackerTargetUrl(apex, apiKey = null) {
+  const base = `https://api.hackertarget.com/hostsearch/?q=${encodeURIComponent(apex)}`;
+  return apiKey ? `${base}&apikey=${encodeURIComponent(apiKey)}` : base;
+}
+
+// Parse HackerTarget CSV into hostnames. Non-host lines (rate-limit messages
+// like "API count exceeded") fail the hostname regex and are dropped.
+export function parseHackerTarget(text, apex = '') {
+  const hosts = new Set();
+  for (const line of String(text).split(/\r?\n/)) {
+    const host = line.split(',')[0]?.trim().toLowerCase();
+    if (!host || host.startsWith('*.')) continue;
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(host)) continue;
+    if (apex && host !== apex && !host.endsWith(`.${apex}`)) continue;
+    hosts.add(host);
+  }
+  return [...hosts].sort();
+}
