@@ -77,31 +77,18 @@ describe('a11yTree.listInteractiveNodes', () => {
 // Regression: getFileInputs was dropped during a11y rewrite and had to be
 // restored. This test guards the export so the omission is caught at test time
 // rather than at runtime when index.js fails to load.
+// Implementation uses page.evaluate() (engine-agnostic) and returns
+// { selector, accept, multiple } descriptors built inside the browser context.
 describe('a11yTree.getFileInputs', () => {
-  function fakePage(els) {
-    return { raw: { $$eval: vi.fn(async (_sel, fn) => fn(els)) } };
+  function fakePage(result = []) {
+    return { evaluate: vi.fn().mockResolvedValue(result) };
   }
 
-  it('returns descriptors for named file inputs', async () => {
-    const page = fakePage([{ name: 'avatar', id: '', accept: 'image/*' }]);
+  it('returns descriptors from the page evaluate call', async () => {
+    const expected = [{ selector: 'input[type="file"][name="avatar"]', accept: 'image/*', multiple: false }];
+    const page = fakePage(expected);
     const inputs = await getFileInputs(page);
-    expect(inputs).toHaveLength(1);
-    expect(inputs[0].name).toBe('avatar');
-    expect(inputs[0].accept).toBe('image/*');
-    expect(inputs[0].selector).toContain('avatar');
-  });
-
-  it('falls back to id selector when name is absent', async () => {
-    const page = fakePage([{ name: '', id: 'doc-upload', accept: '.pdf' }]);
-    const inputs = await getFileInputs(page);
-    expect(inputs[0].name).toBe('doc-upload');
-    expect(inputs[0].selector).toMatch(/^#/);
-  });
-
-  it('uses accept=* when attribute is empty', async () => {
-    const page = fakePage([{ name: 'f', id: '', accept: '' }]);
-    const inputs = await getFileInputs(page);
-    expect(inputs[0].accept).toBe('*');
+    expect(inputs).toEqual(expected);
   });
 
   it('returns empty array when no file inputs exist', async () => {
@@ -110,21 +97,34 @@ describe('a11yTree.getFileInputs', () => {
     expect(inputs).toEqual([]);
   });
 
-  it('queries input[type="file"] selector', async () => {
+  it('delegates to page.evaluate (engine-agnostic, not $$eval)', async () => {
     const page = fakePage([]);
     await getFileInputs(page);
-    expect(page.raw.$$eval).toHaveBeenCalledWith('input[type="file"]', expect.any(Function));
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function));
   });
 
-  it('uses nth-of-type selector and exposes index when name and id are absent', async () => {
-    const page = fakePage([
-      { name: '', id: '', accept: '' },
-      { name: '', id: '', accept: 'image/*' },
-    ]);
+  it('returns empty array for Lightpanda pages without calling evaluate', async () => {
+    const page = { _isLightpanda: true, evaluate: vi.fn() };
     const inputs = await getFileInputs(page);
-    expect(inputs[0].index).toBe(0);
+    expect(inputs).toEqual([]);
+    expect(page.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('returns empty array and swallows errors (detached frame guard)', async () => {
+    const page = { evaluate: vi.fn().mockRejectedValue(new Error('Frame was detached')) };
+    const inputs = await getFileInputs(page);
+    expect(inputs).toEqual([]);
+  });
+
+  it('passes through selector with nth-of-type for anonymous inputs', async () => {
+    const result = [
+      { selector: 'input[type="file"]:nth-of-type(1)', accept: '', multiple: false },
+      { selector: 'input[type="file"]:nth-of-type(2)', accept: 'image/*', multiple: true },
+    ];
+    const page = fakePage(result);
+    const inputs = await getFileInputs(page);
     expect(inputs[0].selector).toMatch(/nth-of-type\(1\)/);
-    expect(inputs[1].index).toBe(1);
     expect(inputs[1].selector).toMatch(/nth-of-type\(2\)/);
+    expect(inputs[1].multiple).toBe(true);
   });
 });
