@@ -107,53 +107,65 @@ const outPath = path.resolve(PROJECT_ROOT, args.out);
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
 const outStream = fs.createWriteStream(outPath, { flags: 'w' });
 
-const stats = { candidates: candidates.length, dead: 0, denied: 0, lowConfidence: 0, kept: 0 };
+const stats = { candidates: candidates.length, dead: 0, denied: 0, lowConfidence: 0, kept: 0, processed: 0 };
 const byPlatform = {};
+const PROGRESS_EVERY = 25;
+
+console.log(`[classify] classifying ${candidates.length} candidates (concurrency=${args.concurrency}, timeout=${args.timeout}ms)…`);
 
 await runPool(
   candidates,
   async (url) => {
-    if (isDenied(url).denied) {
-      stats.denied++;
-      return;
-    }
-    await rateLimit(hostOf(url));
+    try {
+      if (isDenied(url).denied) {
+        stats.denied++;
+        return;
+      }
+      await rateLimit(hostOf(url));
 
-    const live = await fetchText(url, { timeoutMs: args.timeout });
-    if (!live.ok) {
-      stats.dead++;
-      return;
-    }
+      const live = await fetchText(url, { timeoutMs: args.timeout });
+      if (!live.ok) {
+        stats.dead++;
+        return;
+      }
 
-    const scripts = extractScriptSrcs(live.body, live.finalUrl).slice(0, args.maxScripts);
-    const jsBodies = [];
-    for (const s of scripts) {
-      const r = await fetchText(s, { timeoutMs: args.timeout, maxBytes: 900000 });
-      if (r.body) jsBodies.push(r.body);
-    }
+      const scripts = extractScriptSrcs(live.body, live.finalUrl).slice(0, args.maxScripts);
+      const jsBodies = [];
+      for (const s of scripts) {
+        const r = await fetchText(s, { timeoutMs: args.timeout, maxBytes: 900000 });
+        if (r.body) jsBodies.push(r.body);
+      }
 
-    const fp = fingerprint({ url, html: live.body, scripts: jsBodies, headers: live.headers });
-    if (fp.confidence < args.minConfidence) {
-      stats.lowConfidence++;
-      return;
-    }
+      const fp = fingerprint({ url, html: live.body, scripts: jsBodies, headers: live.headers });
+      if (fp.confidence < args.minConfidence) {
+        stats.lowConfidence++;
+        return;
+      }
 
-    outStream.write(`${JSON.stringify({
-      url,
-      platform: fp.platform,
-      confidence: fp.confidence,
-      supabaseUrl: fp.supabaseUrl,
-      anonKey: fp.anonKey,
-      signals: fp.signals,
-    })}\n`);
-    stats.kept++;
-    byPlatform[fp.platform] = (byPlatform[fp.platform] ?? 0) + 1;
-    console.log(`[classify] keep ${fp.platform} (${fp.confidence}) ${url}`);
+      outStream.write(`${JSON.stringify({
+        url,
+        platform: fp.platform,
+        confidence: fp.confidence,
+        supabaseUrl: fp.supabaseUrl,
+        anonKey: fp.anonKey,
+        signals: fp.signals,
+      })}\n`);
+      stats.kept++;
+      byPlatform[fp.platform] = (byPlatform[fp.platform] ?? 0) + 1;
+      console.log(`[classify] keep ${fp.platform} (${fp.confidence}) ${url}`);
+    } finally {
+      // Progress heartbeat so long runs over thousands of hosts don't look
+      // frozen during stretches of dead / low-confidence targets.
+      stats.processed++;
+      if (stats.processed % PROGRESS_EVERY === 0 || stats.processed === candidates.length) {
+        console.log(`[classify] …${stats.processed}/${candidates.length} (kept=${stats.kept} dead=${stats.dead} low=${stats.lowConfidence} denied=${stats.denied})`);
+      }
+    }
   },
   { concurrency: args.concurrency, onError: () => { stats.dead++; } },
 );
 
-outStream.end();
+await new Promise((resolve) => outStream.end(resolve));
 console.log(`\n[classify] candidates=${stats.candidates} kept=${stats.kept} dead=${stats.dead} denied=${stats.denied} low-confidence=${stats.lowConfidence}`);
 console.log(`[classify] by platform: ${JSON.stringify(byPlatform)}`);
 console.log(`[classify] targets: ${path.relative(PROJECT_ROOT, outPath)}`);
