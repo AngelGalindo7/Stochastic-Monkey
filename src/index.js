@@ -298,6 +298,7 @@ async function main() {
       breadcrumbs.record('action', `step=${step} ${desc}`);
 
       const beforeEvents = page.events.length;
+      const beforeCaptures = page.captures?.length ?? 0;
       let result = { success: false };
       let surpriseResult = null;
       let hardEvidenceOuter = [];
@@ -321,6 +322,7 @@ async function main() {
           }
 
           const newEvents = page.events.slice(beforeEvents);
+          const newCaptures = page.captures?.slice(beforeCaptures) ?? [];
           const observed = await snapshotPage(page.raw).catch(() => null);
           const observedUrl = page.raw.url();
           observedForPrev = observed;
@@ -343,6 +345,7 @@ async function main() {
             currentStateId: observedStateId,
             lowSignalExtra: noveltyDenylist,
           });
+          span.setAttribute('captures.count', newCaptures.length);
           span.setAttribute('novelty.score', surpriseResult.score);
           span.setAttribute('surprise.severity', surpriseResult.severity);
           span.setAttribute('surprise.is_bug', surpriseResult.isBug);
