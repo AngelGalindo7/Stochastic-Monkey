@@ -5,7 +5,12 @@ import { isSettled } from '../../harness/lib/manifest.js';
 import { summarize, renderReport } from '../../harness/lib/aggregate.js';
 import { hostOf } from '../../harness/lib/rateLimiter.js';
 import { fingerprint, decodeJwtPayload, extractScriptSrcs } from '../../harness/lib/fingerprint.js';
-import { parseCrtSh, crtShUrl, parseHackerTarget, hackerTargetUrl } from '../../harness/lib/discover.js';
+import {
+  parseCrtSh, crtShUrl,
+  parseHackerTarget, hackerTargetUrl,
+  parseWaybackCdx, waybackCdxUrl,
+  parseRapidDns, rapidDnsUrl,
+} from '../../harness/lib/discover.js';
 
 // Build a fake Supabase anon JWT (header.payload.signature, base64url).
 function fakeJwt(payload) {
@@ -179,5 +184,25 @@ describe('discover (crt.sh)', () => {
       'API count exceeded - Increase Quota with Membership', // junk line
     ].join('\n');
     expect(parseHackerTarget(csv, 'lovable.app')).toEqual(['bar.lovable.app', 'foo.lovable.app']);
+  });
+
+  it('parses wayback CDX array-of-arrays: dedups hosts, drops header/apex/wildcard', () => {
+    const rows = [
+      ['original'], // header
+      ['https://foo.lovable.app/'],
+      ['https://foo.lovable.app/about'], // same host
+      ['http://bar.lovable.app/x?y=1'],
+      ['https://lovable.app/'], // apex only
+      ['https://*.lovable.app/'], // wildcard
+      ['https://evil.example.com/'], // out of scope
+    ];
+    expect(parseWaybackCdx(rows, 'lovable.app')).toEqual(['bar.lovable.app', 'foo.lovable.app']);
+    expect(waybackCdxUrl('lovable.app', 100)).toMatch(/web\.archive\.org\/cdx.*limit=100/);
+  });
+
+  it('scrapes rapiddns html for in-scope hosts', () => {
+    const html = '<td>app-one.lovable.app</td><td>x</td><td>two.lovable.app</td> lovable.app other.example.com';
+    expect(parseRapidDns(html, 'lovable.app')).toEqual(['app-one.lovable.app', 'two.lovable.app']);
+    expect(rapidDnsUrl('lovable.app')).toBe('https://rapiddns.io/subdomain/lovable.app?full=1');
   });
 });

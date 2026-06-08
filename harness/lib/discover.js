@@ -40,7 +40,60 @@ export function parseHackerTarget(text, apex = '') {
     const host = line.split(',')[0]?.trim().toLowerCase();
     if (!host || host.startsWith('*.')) continue;
     if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(host)) continue;
-    if (apex && host !== apex && !host.endsWith(`.${apex}`)) continue;
+    if (apex && !host.endsWith(`.${apex}`)) continue; // subdomains only, drop bare apex
+    hosts.add(host);
+  }
+  return [...hosts].sort();
+}
+
+// Wayback Machine CDX — free, no key, high yield. Every archived URL under the
+// apex. The biggest free firehose for this. output=json is an array-of-arrays
+// whose first row is a header.
+export function waybackCdxUrl(apex, limit = 50000) {
+  const q = new URLSearchParams({
+    url: apex,
+    matchType: 'domain',
+    fl: 'original',
+    collapse: 'urlkey',
+    output: 'json',
+    limit: String(limit),
+  });
+  return `https://web.archive.org/cdx/search/cdx?${q.toString()}`;
+}
+
+export function parseWaybackCdx(data, apex = '') {
+  const rows = typeof data === 'string' ? JSON.parse(data) : data;
+  if (!Array.isArray(rows)) return [];
+  const hosts = new Set();
+  for (const row of rows) {
+    const original = Array.isArray(row) ? row[0] : row;
+    if (!original || original === 'original') continue; // header row
+    let host;
+    try {
+      host = new URL(original).host.toLowerCase();
+    } catch {
+      continue;
+    }
+    if (!host || host.startsWith('*.')) continue;
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(host)) continue;
+    if (apex && !host.endsWith(`.${apex}`)) continue; // subdomains only, drop bare apex
+    hosts.add(host);
+  }
+  return [...hosts].sort();
+}
+
+// RapidDNS — free, no key. HTML page listing subdomains; scrape hostnames.
+export function rapidDnsUrl(apex) {
+  return `https://rapiddns.io/subdomain/${encodeURIComponent(apex)}?full=1`;
+}
+
+export function parseRapidDns(html, apex = '') {
+  if (!apex) return [];
+  const hosts = new Set();
+  const re = new RegExp(`[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*\\.${apex.replace(/\./g, '\\.')}`, 'gi');
+  for (const m of String(html).matchAll(re)) {
+    const host = m[0].toLowerCase();
+    if (host.startsWith('*.') || host === apex) continue;
     hosts.add(host);
   }
   return [...hosts].sort();

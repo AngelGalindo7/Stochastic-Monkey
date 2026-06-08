@@ -17,19 +17,25 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseCrtSh, crtShUrl, parseHackerTarget, hackerTargetUrl } from './lib/discover.js';
+import {
+  parseCrtSh, crtShUrl,
+  parseHackerTarget, hackerTargetUrl,
+  parseWaybackCdx, waybackCdxUrl,
+  parseRapidDns, rapidDnsUrl,
+} from './lib/discover.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_APEXES = ['lovable.app', 'base44.app', 'bolt.new'];
 
 function parseArgs(argv) {
-  const o = { apexes: [], out: 'runs/candidates.txt', timeout: 30000, htKey: null };
+  const o = { apexes: [], out: 'runs/candidates.txt', timeout: 60000, htKey: null, waybackLimit: 50000 };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--apex') o.apexes.push(argv[++i]);
     else if (a === '--out') o.out = argv[++i];
     else if (a === '--timeout') o.timeout = Number(argv[++i]);
     else if (a === '--ht-key') o.htKey = argv[++i];
+    else if (a === '--wayback-limit') o.waybackLimit = Number(argv[++i]);
   }
   if (o.apexes.length === 0) o.apexes = DEFAULT_APEXES;
   return o;
@@ -59,10 +65,22 @@ fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
 const sources = [
   {
+    name: 'wayback',
+    json: true,
+    url: (apex) => waybackCdxUrl(apex, args.waybackLimit),
+    parse: parseWaybackCdx,
+  },
+  {
     name: 'hackertarget',
     json: false,
     url: (apex) => hackerTargetUrl(apex, args.htKey),
     parse: parseHackerTarget,
+  },
+  {
+    name: 'rapiddns',
+    json: false,
+    url: (apex) => rapidDnsUrl(apex),
+    parse: parseRapidDns,
   },
   {
     name: 'crt.sh',
