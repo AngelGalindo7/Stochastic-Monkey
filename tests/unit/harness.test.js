@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { slugify } from '../../harness/lib/slug.js';
 import { makeDenylist } from '../../harness/lib/denylist.js';
 import { isSettled } from '../../harness/lib/manifest.js';
-import { summarize, renderReport } from '../../harness/lib/aggregate.js';
+import { summarize, renderReport, renderDashboardHtml } from '../../harness/lib/aggregate.js';
 import { hostOf } from '../../harness/lib/rateLimiter.js';
 import { fingerprint, decodeJwtPayload, extractScriptSrcs } from '../../harness/lib/fingerprint.js';
 import {
@@ -107,6 +107,23 @@ describe('aggregate.summarize', () => {
     expect(md).toMatch(/## Findings by severity/);
     expect(md).toMatch(/## Disclosure queue/);
     expect(md).toMatch(/HTTP_5XX/);
+  });
+
+  it('renderDashboardHtml produces a self-contained page with the data', () => {
+    const html = renderDashboardHtml(summarize(findings, manifest), findings, { generatedAt: 'X' });
+    expect(html).toMatch(/^<!doctype html>/);
+    expect(html).toContain('<style>'); // inline CSS — no CDN
+    expect(html).not.toMatch(/https?:\/\/[^"]*\.(css|js)"/); // no external assets
+    expect(html).toContain('HTTP_5XX');
+    expect(html).toContain('Total findings');
+    expect(html).toContain('https://a'); // a finding url
+  });
+
+  it('escapes HTML in finding fields', () => {
+    const evil = [{ slug: 'x', url: 'https://x/<script>alert(1)</script>', platform: 'p', severity: 'low', signal: 'S' }];
+    const html = renderDashboardHtml(summarize(evil, new Map()), evil);
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).toContain('&lt;script&gt;');
   });
 });
 
