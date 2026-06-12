@@ -102,3 +102,93 @@ describe('httpSignals.isNoiseUrl', () => {
     expect(isNoiseUrl('http://app/api/orders')).toBe(false);
   });
 });
+
+describe('httpSignals — CONSOLE_ERROR signal', () => {
+  const origin = 'http://app';
+
+  it('real app error fires CONSOLE_ERROR', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'CONSOLE_ERROR', message: 'TypeError: Cannot read properties of undefined (reading map)', url: 'http://app/main.js' }],
+      origin,
+    );
+    expect(signals).toContain('CONSOLE_ERROR');
+  });
+
+  it('[HMR] message is silenced', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'CONSOLE_ERROR', message: '[HMR] Cannot apply update', url: 'http://app/main.js' }],
+      origin,
+    );
+    expect(signals).toHaveLength(0);
+  });
+
+  it('[vite] message is silenced', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'CONSOLE_ERROR', message: '[vite] failed to connect to HMR server', url: 'http://app/main.js' }],
+      origin,
+    );
+    expect(signals).toHaveLength(0);
+  });
+
+  it('[webpack message is silenced', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'CONSOLE_ERROR', message: '[webpack HMR] Cannot apply update.', url: 'http://app/main.js' }],
+      origin,
+    );
+    expect(signals).toHaveLength(0);
+  });
+
+  it('Download the React DevTools is silenced', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'CONSOLE_ERROR', message: 'Download the React DevTools for a better development experience', url: '' }],
+      origin,
+    );
+    expect(signals).toHaveLength(0);
+  });
+
+  it('React 18 Warning: prefix is silenced', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'CONSOLE_ERROR', message: 'Warning: Each child in a list should have a unique "key" prop.', url: 'http://app/main.js' }],
+      origin,
+    );
+    expect(signals).toHaveLength(0);
+  });
+
+  it('[Vue warn] is silenced', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'CONSOLE_ERROR', message: '[Vue warn]: Property "foo" was accessed during render but is not defined', url: 'http://app/main.js' }],
+      origin,
+    );
+    expect(signals).toHaveLength(0);
+  });
+
+  it('third-party origin is filtered out when targetOrigin is set', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'CONSOLE_ERROR', message: 'Uncaught Error: stripe failed', url: 'https://js.stripe.com/v3/stripe.js' }],
+      origin,
+    );
+    expect(signals).toHaveLength(0);
+  });
+
+  it('inline script (no url) is treated as first-party', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'CONSOLE_ERROR', message: 'ReferenceError: foo is not defined', url: '' }],
+      origin,
+    );
+    expect(signals).toContain('CONSOLE_ERROR');
+  });
+
+  it('missing message field does not throw', () => {
+    expect(() =>
+      pageEventsToHardSignals([{ type: 'CONSOLE_ERROR' }], origin),
+    ).not.toThrow();
+  });
+});
+
+describe('httpSignals — DOM_FROZEN signal', () => {
+  it('DOM_FROZEN event passes through as a hard signal', () => {
+    const { signals, evidence } = pageEventsToHardSignals([{ type: 'DOM_FROZEN' }]);
+    expect(signals).toContain('DOM_FROZEN');
+    expect(evidence.some((e) => e.signal === 'DOM_FROZEN')).toBe(true);
+  });
+});
