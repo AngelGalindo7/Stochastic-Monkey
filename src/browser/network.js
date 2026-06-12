@@ -1,3 +1,5 @@
+import { extractResourceId } from '../perception/resourceId.js';
+
 const BODY_SIZE_LIMIT = 64 * 1024; // 64 KB — guards against OOM on large API responses
 
 // Pure media/style asset types that will never carry JSON bodies.
@@ -94,7 +96,7 @@ export function attachPlaywrightCapture(page, { bodySizeLimit = BODY_SIZE_LIMIT 
         } catch {}
       }
 
-      captures.push({ method, url, resourceType, status, requestBody, responseBody });
+      captures.push({ method, url, resourceType, status, requestBody, responseBody, resource_id: extractResourceId(url) });
     } catch {} // capture errors must never affect the crawl
   });
 
@@ -149,6 +151,7 @@ export async function attachPuppeteerCapture(cdpClient, { bodySizeLimit = BODY_S
       resourceType: info.resourceType,
       status: info.status,
       requestBody: tryParseJson(info.postData),
+      resource_id: extractResourceId(info.url),
     };
 
     if (!isJsonContentType(info.contentType)) {
