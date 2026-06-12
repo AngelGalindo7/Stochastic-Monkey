@@ -84,9 +84,12 @@ function pruneSemanticTree(node) {
   return out;
 }
 
-// Enumerate file inputs so the UPLOAD action can target them.
+// Enumerate file inputs so the UPLOAD action can target them. Operates on the
+// raw Puppeteer/Playwright page (like snapshotPage) because index.js calls both
+// with page.raw; Lightpanda exposes no upload surface, so short-circuit it.
 export async function getFileInputs(page) {
-  return page.raw.$$eval('input[type="file"]', (els) =>
+  if (page._isLightpanda) return [];
+  return page.$$eval('input[type="file"]', (els) =>
     els.map((el, i) => ({
       name: el.name || el.id || '',
       accept: el.accept || '*',
