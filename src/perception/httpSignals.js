@@ -1,5 +1,7 @@
 import { CONSOLE_ERROR_DENYLIST, isFirstPartyConsoleError } from '../agent/signals.js';
 
+export { CONSOLE_ERROR_DENYLIST, isFirstPartyConsoleError };
+
 // Telemetry/analytics/asset URLs whose 4xx or failure is background noise, not
 // a defect in the app under test.
 const NOISE_PATTERNS = [
