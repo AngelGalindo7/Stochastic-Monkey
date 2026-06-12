@@ -17,7 +17,7 @@ export async function launchPuppeteer({ headful = false, userDataDir } = {}) {
       const events = attachNetworkEvents(page);
       const client = await page.target().createCDPSession();
       const captures = await attachPuppeteerCapture(client);
-      return { raw: page, events, captures };
+      return { raw: page, events, captures, engine: 'puppeteer' };
     },
     async close() {
       await browser.close();
