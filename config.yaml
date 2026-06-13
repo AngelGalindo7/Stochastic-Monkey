@@ -20,6 +20,13 @@ target:
     - "a[href*='github.com']"
 
 auth:
+  # Role map consumed by the browser factory's contextFor() (W8).
+  # Each key becomes an isolated BrowserContext — no cookie or localStorage bleed
+  # between roles. null = zero-credential context (no storageState injected).
+  # See DECISION_LOG 011.
+  roles:
+    user: {}    # cookie seeding handled by auth.login below
+    anon: null  # zero-credential baseline arm for W11 B6 auth-replay detection
   # Preferred path: POST credentials to /users/login before SPA boot, then seed
   # the cookies block below with the freshly-issued tokens from Set-Cookie.
   # Removes the manual refresh_token paste from the loop. When this block is
