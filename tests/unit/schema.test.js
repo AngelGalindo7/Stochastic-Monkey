@@ -292,3 +292,35 @@ describe('schema.validate — auth.login', () => {
     expect(() => validate(cfg)).not.toThrow();
   });
 });
+
+describe('schema.validate — auth.roles', () => {
+  it('accepts null (anon) role value', () => {
+    const cfg = base();
+    cfg.auth = { roles: { anon: null } };
+    expect(() => validate(cfg)).not.toThrow();
+  });
+
+  it('accepts valid object role value', () => {
+    const cfg = base();
+    cfg.auth = { roles: { user: { cookies: [{ name: 'tok', value: 'x', domain: 'example.com' }] } } };
+    expect(() => validate(cfg)).not.toThrow();
+  });
+
+  it('throws when auth.roles is not an object', () => {
+    const cfg = base();
+    cfg.auth = { roles: 'bad' };
+    expect(() => validate(cfg)).toThrow('auth.roles must be an object map');
+  });
+
+  it('throws when a role entry is an array', () => {
+    const cfg = base();
+    cfg.auth = { roles: { user: ['bad'] } };
+    expect(() => validate(cfg)).toThrow('must be an object or null');
+  });
+
+  it('throws when a role entry has an invalid login url (exercises validateAuthBlock recursion)', () => {
+    const cfg = base();
+    cfg.auth = { roles: { admin: { login: { url: 'ftp://bad', email: 'a@b.com', password: 'pw' } } } };
+    expect(() => validate(cfg)).toThrow('login.url must be an http(s) URL');
+  });
+});
