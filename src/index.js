@@ -324,7 +324,10 @@ async function main() {
           }
 
           const newEvents = page.events.slice(beforeEvents);
-          if (await checkDomFrozen(page, { settleMs: DOM_FROZEN_SETTLE_MS })) {
+          // Skip DOM_FROZEN when the action triggered a navigation — an empty
+          // body mid-transition is expected, not a blank-screen regression.
+          const postActionUrl = page.raw.url();
+          if (postActionUrl === preActionUrl && await checkDomFrozen(page, { settleMs: DOM_FROZEN_SETTLE_MS })) {
             newEvents.push({ type: 'DOM_FROZEN' });
           }
           const newCaptures = page.captures?.slice(beforeCaptures) ?? [];
