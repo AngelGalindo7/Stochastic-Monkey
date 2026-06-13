@@ -14,6 +14,10 @@ import { attachNetworkEvents, attachPlaywrightCapture } from './network.js';
 //   - userDataDir: a persistent on-disk profile (Playwright's equivalent of
 //     puppeteer's userDataDir). When set, storageState is ignored — the profile
 //     dir IS the persisted state, and layering storageState on top is undefined.
+//   - roles: map of { roleName: { storageState? } | null }. Each role gets its
+//     own isolated BrowserContext (no cookie/localStorage bleed between roles).
+//     null value = anon role (no session). storageState (legacy) is normalized
+//     to roles internally; callers that already pass storageState need no change.
 //
 // MIGRATION CAVEATS (these live in callers, NOT here — they must be handled
 // when wiring the factory + index.js to this launcher):
@@ -31,40 +35,49 @@ import { attachNetworkEvents, attachPlaywrightCapture } from './network.js';
 //      CDP Accessibility.getFullAXTree — which carries the identical AX role
 //      vocabulary Puppeteer's snapshot() is itself built from — so perception,
 //      state abstraction, and action sampling run engine-agnostic.
-export async function launchPlaywright({ headful = false, userDataDir, storageState } = {}) {
+export async function launchPlaywright({ headful = false, userDataDir, storageState, roles } = {}) {
   const args = ['--no-sandbox', '--disable-setuid-sandbox'];
   const viewport = { width: 1280, height: 800 };
 
-  // Persistent profile and storageState are mutually exclusive (see header).
+  // normalize storageState into roles so contextFor() is the single dispatch path.
+  const resolvedRoles = roles ?? (storageState ? { user: { storageState } } : null);
+
   let browser = null;
-  let context;
+  let persistentCtx = null;
+  const contexts = new Map();
+
   if (userDataDir) {
-    context = await chromium.launchPersistentContext(userDataDir, {
+    persistentCtx = await chromium.launchPersistentContext(userDataDir, {
       headless: !headful,
       args,
       viewport,
     });
   } else {
     browser = await chromium.launch({ headless: !headful, args });
-    context = await browser.newContext({
+  }
+
+  async function contextFor(role) {
+    // Persistent contexts cannot be forked — all roles share one context, so
+    // role isolation is unavailable when userDataDir is active.
+    if (persistentCtx) return persistentCtx;
+    if (contexts.has(role)) return contexts.get(role);
+    const roleOpts = resolvedRoles?.[role];
+    const ctx = await browser.newContext({
       viewport,
-      ...(storageState ? { storageState } : {}),
+      ...(roleOpts?.storageState ? { storageState: roleOpts.storageState } : {}),
     });
+    contexts.set(role, ctx);
+    return ctx;
   }
 
-  // Puppeteer-API compatibility shim: cookies are a context-level concept in
-  // Playwright, but index.js drives them through page.setCookie / page.cookies.
-  // Re-expose both on the page, translating the varargs/array signature
-  // difference, so the auth seeding block needs no engine-aware branching.
-  function attachCookieShim(page) {
-    page.setCookie = (...cookies) => context.addCookies(cookies);
-    page.cookies = (...urls) => context.cookies(urls.length ? urls : undefined);
+  function attachCookieShim(page, ctx) {
+    page.setCookie = (...cookies) => ctx.addCookies(cookies);
+    page.cookies = (...urls) => ctx.cookies(urls.length ? urls : undefined);
   }
 
-  // Rebuild the flat CDP AXNode list into the nested { role, name, value,
-  // children } shape Puppeteer's accessibility.snapshot() returns. CDP uses the
-  // same AX role strings (RootWebArea / heading / link / StaticText / ...), so
-  // the pruned tree, its hash, and the sampled actions match the Puppeteer path.
+  // CDP uses the same AX role strings (RootWebArea / heading / link /
+  // StaticText / ...) as Puppeteer's accessibility.snapshot() output, so the
+  // pruned tree, its hash, and the sampled actions match the Puppeteer path.
   function axNodesToTree(nodes) {
     const byId = new Map(nodes.map((n) => [n.nodeId, n]));
     const childIds = new Set();
@@ -88,10 +101,8 @@ export async function launchPlaywright({ headful = false, userDataDir, storageSt
     return build(root);
   }
 
-  // Accessibility shim (see caveat 3): one CDP session per page, reused across
-  // steps. Re-expose page.accessibility.snapshot() so a11yTree.js is unchanged.
-  async function attachAccessibilityShim(page) {
-    const client = await context.newCDPSession(page);
+  async function attachAccessibilityShim(page, ctx) {
+    const client = await ctx.newCDPSession(page);
     await client.send('Accessibility.enable');
     page.accessibility = {
       snapshot: async () => {
@@ -103,18 +114,23 @@ export async function launchPlaywright({ headful = false, userDataDir, storageSt
 
   return {
     kind: 'playwright',
-    raw: browser ?? context,
-    async newPage() {
-      const page = await context.newPage();
+    raw: browser ?? persistentCtx,
+    async newPage(role = 'user') {
+      const ctx = await contextFor(role);
+      const page = await ctx.newPage();
       const events = attachNetworkEvents(page);
       const captures = attachPlaywrightCapture(page);
-      attachCookieShim(page);
-      await attachAccessibilityShim(page);
-      return { raw: page, events, captures, engine: 'playwright' };
+      attachCookieShim(page, ctx);
+      await attachAccessibilityShim(page, ctx);
+      return { raw: page, events, captures, engine: 'playwright', role };
     },
     async close() {
-      await context.close();
-      if (browser) await browser.close();
+      if (persistentCtx) {
+        await persistentCtx.close();
+      } else {
+        for (const ctx of contexts.values()) await ctx.close().catch(() => {});
+        if (browser) await browser.close();
+      }
     },
   };
 }
