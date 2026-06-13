@@ -85,120 +85,45 @@ function pickMacro(macros, rng) {
   return macros[macros.length - 1];
 }
 
-async function main() {
-  const args = parseArgs(process.argv);
-  const seedSource = process.env.HEURISTIC_SEED ?? null;
-
-  const preConfig = loadConfig({ configPath: args.configPath });
-  const seed = seedSource !== null ? Number(seedSource) : preConfig.run.seed;
-  const runId = makeRunId(seed);
-
-  const config = loadConfig({ configPath: args.configPath, runId });
-
-  const tracer = initTelemetry({ runId, seed, otelConfig: config.observability?.otel });
-  const breadcrumbs = new Breadcrumbs({
-    filePath: config.observability?.breadcrumbs?.path,
-    enabled: config.observability?.breadcrumbs?.enabled !== false,
-  });
-
-  breadcrumbs.record('run.start', `run ${runId} seed=${seed} target=${config.target.url}`);
-
-  let targetOrigin = '';
-  try { targetOrigin = new URL(config.target.url).origin; } catch { /* invalid url */ }
-
-  const rng = seedrandom(String(seed));
-  const persistSession = config.auth?.persistSession === true;
+// Runs one crawl arm (authenticated or anon) to completion.
+// Returns { firstBug, fatalError }. Closes breadcrumbs; caller closes browser.
+async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, stepsDir, targetOrigin }) {
   const engine = config.browser?.engine ?? 'playwright';
-  const browser = await createBrowser({
-    engine,
-    preferLightpanda: engine === 'puppeteer',
-    headful: process.env.HEADFUL === 'true',
-    userDataDir: persistSession ? path.resolve(PROJECT_ROOT, engine === 'playwright' ? '.playwright-data' : '.puppeteer-data') : undefined,
-    storageState: config.browser?.storageState,
-    roles: config.auth?.roles,
-  });
-  const page = await browser.newPage('user');
-
-  const root = new MctsNode({ stateId: 'ROOT' });
   let firstBug = null;
   let fatalError = null;
 
-  const stepsDir = path.resolve(PROJECT_ROOT, config.triage?.bugRoot ?? 'BUG', runId, 'steps');
-  fs.mkdirSync(stepsDir, { recursive: true });
-
   try {
-    // When persistSession is on, the prior run's rotated cookies are already in
-    // the user-data-dir's jar. Re-seeding from config would overwrite valid
-    // cookies with the stale values pasted at first-time setup — so only seed
-    // when the named cookies are missing from the jar.
-    const configCookies = config.auth?.cookies ?? [];
-    const existingCookies = await page.raw.cookies(config.target.url);
-    const existingNames = new Set(existingCookies.map((c) => c.name));
-    const needsCookieSeed = configCookies.some((c) => !existingNames.has(c.name));
+    if (role !== 'anon') {
+      // Cookie + localStorage seeding for authenticated roles only.
+      const configCookies = config.auth?.cookies ?? [];
+      const existingCookies = await page.raw.cookies(config.target.url);
+      const existingNames = new Set(existingCookies.map((c) => c.name));
+      const needsCookieSeed = configCookies.some((c) => !existingNames.has(c.name));
 
-    if (configCookies.length && needsCookieSeed) {
-      const loginCfg = config.auth?.login;
-      if (loginCfg?.email) {
-        // Credentials login: POST to the backend's login endpoint, parse the
-        // Set-Cookie response, and fill the values into the cookie templates
-        // declared above. Removes the manual refresh_token paste — the response
-        // is already a fresh access/refresh pair, so pre-refresh is skipped.
-        // See DECISION_LOG 010.
-        const res = await fetch(loginCfg.url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: loginCfg.email, password: loginCfg.password }),
-        });
-        if (!res.ok) {
-          const body = await res.text().catch(() => '');
-          const hint = res.status === 429
-            ? ' (rate limit: /users/login allows 5/min, 20/hour per IP)'
-            : '';
-          breadcrumbs.record('auth.error', `login ${res.status}: ${body.slice(0, 160)}`);
-          console.error(
-            `\n[auth] Login failed (${res.status})${hint}.\n` +
-              `Check auth.login in config.yaml. Server said:\n  ${body.slice(0, 240)}\n`,
-          );
-          throw new Error('login failed; aborting before SPA boot');
-        }
-        const setCookies = res.headers.getSetCookie?.() ?? [];
-        const rotated = {};
-        for (const sc of setCookies) {
-          const [pair] = sc.split(';');
-          const eq = pair.indexOf('=');
-          if (eq > 0) rotated[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
-        }
-        const seeded = configCookies
-          .filter((c) => rotated[c.name] !== undefined)
-          .map((c) => ({ ...c, value: rotated[c.name] }));
-        if (!seeded.length) {
-          throw new Error('login ok but no matching cookies in Set-Cookie response');
-        }
-        await page.raw.setCookie(...seeded);
-        breadcrumbs.record('auth', `login ok; seeded ${seeded.length} cookie(s)`);
-      } else {
-        await page.raw.setCookie(...configCookies);
-        breadcrumbs.record('auth', `injected ${configCookies.length} cookie(s)`);
-
-        // Pre-refresh: when seeding from config, immediately rotate the tokens
-        // via the backend's refresh endpoint BEFORE the SPA boots its own refresh.
-        // Shrinks the race window between "you pasted the token" and "the SPA
-        // burns it" — if the configured refresh token is already revoked, we fail
-        // here with a clear error rather than a confusing /Login bounce later.
-        if (config.auth?.refreshUrl) {
-          const cookieHeader = configCookies.map((c) => `${c.name}=${c.value}`).join('; ');
-          const res = await fetch(config.auth.refreshUrl, {
+      if (configCookies.length && needsCookieSeed) {
+        const loginCfg = config.auth?.login;
+        if (loginCfg?.email) {
+          // Credentials login: POST to the backend's login endpoint, parse the
+          // Set-Cookie response, and fill the values into the cookie templates
+          // declared above. Removes the manual refresh_token paste — the response
+          // is already a fresh access/refresh pair, so pre-refresh is skipped.
+          // See DECISION_LOG 010.
+          const res = await fetch(loginCfg.url, {
             method: 'POST',
-            headers: { Cookie: cookieHeader },
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: loginCfg.email, password: loginCfg.password }),
           });
           if (!res.ok) {
             const body = await res.text().catch(() => '');
-            breadcrumbs.record('auth.error', `pre-refresh ${res.status}: ${body.slice(0, 160)}`);
+            const hint = res.status === 429
+              ? ' (rate limit: /users/login allows 5/min, 20/hour per IP)'
+              : '';
+            breadcrumbs.record('auth.error', `login ${res.status}: ${body.slice(0, 160)}`);
             console.error(
-              `\n[auth] Pre-refresh failed (${res.status}). Your configured refresh_token is dead.\n` +
-                `Paste a fresh one into config.yaml and run again. Server said:\n  ${body.slice(0, 240)}\n`,
+              `\n[auth] Login failed (${res.status})${hint}.\n` +
+                `Check auth.login in config.yaml. Server said:\n  ${body.slice(0, 240)}\n`,
             );
-            throw new Error('pre-refresh failed; aborting before SPA boot');
+            throw new Error('login failed; aborting before SPA boot');
           }
           const setCookies = res.headers.getSetCookie?.() ?? [];
           const rotated = {};
@@ -207,19 +132,59 @@ async function main() {
             const eq = pair.indexOf('=');
             if (eq > 0) rotated[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
           }
-          const updated = configCookies
+          const seeded = configCookies
             .filter((c) => rotated[c.name] !== undefined)
             .map((c) => ({ ...c, value: rotated[c.name] }));
-          if (updated.length) {
-            await page.raw.setCookie(...updated);
-            breadcrumbs.record('auth', `pre-refresh ok; rotated ${updated.length} cookie(s) in jar`);
-          } else {
-            breadcrumbs.record('auth', 'pre-refresh ok; no Set-Cookie in response');
+          if (!seeded.length) {
+            throw new Error('login ok but no matching cookies in Set-Cookie response');
+          }
+          await page.raw.setCookie(...seeded);
+          breadcrumbs.record('auth', `login ok; seeded ${seeded.length} cookie(s)`);
+        } else {
+          await page.raw.setCookie(...configCookies);
+          breadcrumbs.record('auth', `injected ${configCookies.length} cookie(s)`);
+
+          // Pre-refresh: when seeding from config, immediately rotate the tokens
+          // via the backend's refresh endpoint BEFORE the SPA boots its own refresh.
+          // Shrinks the race window between "you pasted the token" and "the SPA
+          // burns it" — if the configured refresh token is already revoked, we fail
+          // here with a clear error rather than a confusing /Login bounce later.
+          if (config.auth?.refreshUrl) {
+            const cookieHeader = configCookies.map((c) => `${c.name}=${c.value}`).join('; ');
+            const res = await fetch(config.auth.refreshUrl, {
+              method: 'POST',
+              headers: { Cookie: cookieHeader },
+            });
+            if (!res.ok) {
+              const body = await res.text().catch(() => '');
+              breadcrumbs.record('auth.error', `pre-refresh ${res.status}: ${body.slice(0, 160)}`);
+              console.error(
+                `\n[auth] Pre-refresh failed (${res.status}). Your configured refresh_token is dead.\n` +
+                  `Paste a fresh one into config.yaml and run again. Server said:\n  ${body.slice(0, 240)}\n`,
+              );
+              throw new Error('pre-refresh failed; aborting before SPA boot');
+            }
+            const setCookies = res.headers.getSetCookie?.() ?? [];
+            const rotated = {};
+            for (const sc of setCookies) {
+              const [pair] = sc.split(';');
+              const eq = pair.indexOf('=');
+              if (eq > 0) rotated[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+            }
+            const updated = configCookies
+              .filter((c) => rotated[c.name] !== undefined)
+              .map((c) => ({ ...c, value: rotated[c.name] }));
+            if (updated.length) {
+              await page.raw.setCookie(...updated);
+              breadcrumbs.record('auth', `pre-refresh ok; rotated ${updated.length} cookie(s) in jar`);
+            } else {
+              breadcrumbs.record('auth', 'pre-refresh ok; no Set-Cookie in response');
+            }
           }
         }
+      } else if (configCookies.length) {
+        breadcrumbs.record('auth', `reusing ${configCookies.length} persisted cookie(s)`);
       }
-    } else if (configCookies.length) {
-      breadcrumbs.record('auth', `reusing ${configCookies.length} persisted cookie(s)`);
     }
 
     await page.raw.goto(config.target.url, {
@@ -227,22 +192,22 @@ async function main() {
       timeout: 30000,
     });
 
-    // Same logic for localStorage: skip the seed if the keys are already present
-    // (persisted profile), otherwise we'd clobber whatever the SPA last wrote.
-    const lsEntries = Object.entries(config.auth?.localStorage ?? {});
-    if (lsEntries.length) {
-      const presentKeys = await page.raw.evaluate(
-        (keys) => keys.filter((k) => localStorage.getItem(k) !== null),
-        lsEntries.map(([k]) => k),
-      );
-      if (presentKeys.length < lsEntries.length) {
-        await page.raw.evaluate((entries) => {
-          for (const [k, v] of entries) localStorage.setItem(k, v);
-        }, lsEntries);
-        await page.raw.goto(config.target.url, { waitUntil: engine === 'playwright' ? 'networkidle' : 'networkidle2', timeout: 30000 });
-        breadcrumbs.record('auth', `seeded ${lsEntries.length} localStorage key(s); re-navigated`);
-      } else {
-        breadcrumbs.record('auth', `reusing ${lsEntries.length} persisted localStorage key(s)`);
+    if (role !== 'anon') {
+      const lsEntries = Object.entries(config.auth?.localStorage ?? {});
+      if (lsEntries.length) {
+        const presentKeys = await page.raw.evaluate(
+          (keys) => keys.filter((k) => localStorage.getItem(k) !== null),
+          lsEntries.map(([k]) => k),
+        );
+        if (presentKeys.length < lsEntries.length) {
+          await page.raw.evaluate((entries) => {
+            for (const [k, v] of entries) localStorage.setItem(k, v);
+          }, lsEntries);
+          await page.raw.goto(config.target.url, { waitUntil: engine === 'playwright' ? 'networkidle' : 'networkidle2', timeout: 30000 });
+          breadcrumbs.record('auth', `seeded ${lsEntries.length} localStorage key(s); re-navigated`);
+        } else {
+          breadcrumbs.record('auth', `reusing ${lsEntries.length} persisted localStorage key(s)`);
+        }
       }
     }
 
@@ -260,6 +225,8 @@ async function main() {
     const noveltyDenylist = (config.novelty?.nameDenylist ?? []).map((s) => new RegExp(s, 'i'));
     let prevA11y = null;
     let prevUrl = null;
+
+    const root = new MctsNode({ stateId: 'ROOT' });
 
     for (let step = 0; step < config.run.maxSteps; step++) {
       const a11y = await snapshotPage(page.raw);
@@ -310,7 +277,7 @@ async function main() {
 
       await tracer.startActiveSpan(
         'mcts.expand',
-        { attributes: { step, 'state.id': stateId, action: action.type } },
+        { attributes: { step, 'state.id': stateId, action: action.type, arm: role } },
         async (span) => {
           result = await executeAction({ action, page, config, rng, breadcrumbs });
           span.setAttribute('action.success', result.success);
@@ -422,16 +389,98 @@ async function main() {
   } finally {
     breadcrumbs.record('run.end', firstBug ? `bug: ${firstBug.folderRel}` : 'no bug found');
     await breadcrumbs.close();
+  }
+
+  return { firstBug, fatalError };
+}
+
+async function main() {
+  const args = parseArgs(process.argv);
+  const seedSource = process.env.HEURISTIC_SEED ?? null;
+
+  const preConfig = loadConfig({ configPath: args.configPath });
+  const seed = seedSource !== null ? Number(seedSource) : preConfig.run.seed;
+  const runId = makeRunId(seed);
+
+  const config = loadConfig({ configPath: args.configPath, runId });
+
+  const tracer = initTelemetry({ runId, seed, otelConfig: config.observability?.otel });
+
+  let targetOrigin = '';
+  try { targetOrigin = new URL(config.target.url).origin; } catch { /* invalid url */ }
+
+  const persistSession = config.auth?.persistSession === true;
+  const engine = config.browser?.engine ?? 'playwright';
+  const browser = await createBrowser({
+    engine,
+    preferLightpanda: engine === 'puppeteer',
+    headful: process.env.HEADFUL === 'true',
+    userDataDir: persistSession ? path.resolve(PROJECT_ROOT, engine === 'playwright' ? '.playwright-data' : '.puppeteer-data') : undefined,
+    storageState: config.browser?.storageState,
+    roles: config.auth?.roles,
+  });
+
+  // Determine which roles to run. Defaults to ['user'] for backwards compat
+  // when no roles are configured; expands to all declared roles otherwise.
+  const declaredRoles = config.auth?.roles ? Object.keys(config.auth.roles) : ['user'];
+
+  let combinedFirstBug = null;
+  let combinedFatalError = null;
+
+  try {
+    for (const role of declaredRoles) {
+      const page = await browser.newPage(role);
+      const armSuffix = role === 'user' ? '' : `-${role}`;
+
+      const bcBasePath = config.observability?.breadcrumbs?.path ?? `BUG/${runId}/breadcrumbs.jsonl`;
+      const bcPath = bcBasePath.replace('.jsonl', `${armSuffix}.jsonl`);
+
+      const breadcrumbs = new Breadcrumbs({
+        filePath: bcPath,
+        enabled: config.observability?.breadcrumbs?.enabled !== false,
+      });
+
+      const stepsDir = path.resolve(
+        PROJECT_ROOT,
+        config.triage?.bugRoot ?? 'BUG',
+        runId,
+        role === 'user' ? 'steps' : `steps-${role}`,
+      );
+      fs.mkdirSync(stepsDir, { recursive: true });
+
+      // Each arm gets a fresh rng from the same seed for reproducible per-arm
+      // action sequences; arms are independent crawls of the same target.
+      const rng = seedrandom(String(seed));
+
+      breadcrumbs.record('run.start', `run ${runId} arm=${role} seed=${seed} target=${config.target.url}`);
+      console.log(`\n[run] arm=${role} seed=${seed}`);
+
+      const { firstBug, fatalError } = await runArm({
+        role,
+        page,
+        seed,
+        config,
+        rng,
+        tracer,
+        breadcrumbs,
+        stepsDir,
+        targetOrigin,
+      });
+
+      if (firstBug && !combinedFirstBug) combinedFirstBug = firstBug;
+      if (fatalError && !combinedFatalError) combinedFatalError = fatalError;
+    }
+  } finally {
     await browser.close().catch(() => {});
     await shutdownTelemetry();
   }
 
-  if (firstBug) {
-    console.log(`\nBUG: ${firstBug.folderRel}`);
+  if (combinedFirstBug) {
+    console.log(`\nBUG: ${combinedFirstBug.folderRel}`);
     process.exitCode = 0;
-  } else if (fatalError) {
-    console.error(`\n[fatal] run ${runId} aborted before the first action: ${fatalError.message}`);
-    if (fatalError.stack) console.error(fatalError.stack);
+  } else if (combinedFatalError) {
+    console.error(`\n[fatal] run ${runId} aborted before the first action: ${combinedFatalError.message}`);
+    if (combinedFatalError.stack) console.error(combinedFatalError.stack);
     process.exitCode = 1;
   } else {
     console.log(`\nrun ${runId} completed without surfacing a bug.`);
