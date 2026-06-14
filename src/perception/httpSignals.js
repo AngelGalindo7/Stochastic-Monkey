@@ -1,3 +1,7 @@
+import { CONSOLE_ERROR_DENYLIST, isFirstPartyConsoleError } from '../agent/signals.js';
+
+export { CONSOLE_ERROR_DENYLIST, isFirstPartyConsoleError };
+
 // Telemetry/analytics/asset URLs whose 4xx or failure is background noise, not
 // a defect in the app under test.
 const NOISE_PATTERNS = [
@@ -22,7 +26,7 @@ const ASSET_RESOURCE_TYPES = new Set(['image', 'stylesheet', 'font', 'media', 's
 // drive this — a 5xx is always a server fault; a 4xx is classified by the
 // request it answered: navigation (broken route) and assets are bugs, API
 // validation 4xx is recorded as evidence only.
-export function pageEventsToHardSignals(events) {
+export function pageEventsToHardSignals(events, targetOrigin = '') {
   const out = [];
   const evidence = [];
   for (const e of events) {
@@ -46,6 +50,15 @@ export function pageEventsToHardSignals(events) {
     } else if (e.type === 'REQUEST_FAILED' && !isNoiseUrl(e.url)) {
       out.push('ASSET_4XX');
       evidence.push({ signal: 'REQUEST_FAILED', detail: `fail ${e.url}` });
+    } else if (e.type === 'CONSOLE_ERROR') {
+      const msg = e.message ?? '';
+      if (!CONSOLE_ERROR_DENYLIST.some((re) => re.test(msg)) && isFirstPartyConsoleError(e, targetOrigin)) {
+        out.push('CONSOLE_ERROR');
+        evidence.push({ signal: 'CONSOLE_ERROR', detail: msg });
+      }
+    } else if (e.type === 'DOM_FROZEN') {
+      out.push('DOM_FROZEN');
+      evidence.push({ signal: 'DOM_FROZEN', detail: 'SPA root has no children after settle' });
     }
   }
   return { signals: out, evidence };

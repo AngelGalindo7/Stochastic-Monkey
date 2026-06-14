@@ -19,6 +19,7 @@ export const HARD_SIGNALS = {
   HTTP_4XX_NAV: { score: 0.8, severity: 'medium' },
   ASSET_4XX: { score: 0.9, severity: 'medium' },
   PERF_BREACH: { score: 0.6, severity: 'low' },
+  CONSOLE_ERROR: { score: 0.7, severity: 'medium' },
   DOM_FROZEN: { score: 0.85, severity: 'medium' },
 };
 
