@@ -119,6 +119,7 @@ async function main() {
 
   const root = new MctsNode({ stateId: 'ROOT' });
   let firstBug = null;
+  let fatalError = null;
 
   const stepsDir = path.resolve(PROJECT_ROOT, config.triage?.bugRoot ?? 'BUG', runId, 'steps');
   fs.mkdirSync(stepsDir, { recursive: true });
@@ -407,6 +408,11 @@ async function main() {
         breadcrumbs: breadcrumbs.all(),
         config,
       });
+    } else if (!firstBug) {
+      // No bug AND no action taken — the run aborted inside the harness itself
+      // (perception/auth threw on step 0). That is a broken run, not a clean
+      // "no bug found"; surface it rather than masking it as a success exit.
+      fatalError = err;
     }
   } finally {
     breadcrumbs.record('run.end', firstBug ? `bug: ${firstBug.folderRel}` : 'no bug found');
@@ -418,6 +424,10 @@ async function main() {
   if (firstBug) {
     console.log(`\nBUG: ${firstBug.folderRel}`);
     process.exitCode = 0;
+  } else if (fatalError) {
+    console.error(`\n[fatal] run ${runId} aborted before the first action: ${fatalError.message}`);
+    if (fatalError.stack) console.error(fatalError.stack);
+    process.exitCode = 1;
   } else {
     console.log(`\nrun ${runId} completed without surfacing a bug.`);
     process.exitCode = 0;
