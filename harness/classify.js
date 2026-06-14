@@ -105,54 +105,80 @@ const candidates = fs
 
 const outPath = path.resolve(PROJECT_ROOT, args.out);
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
+// Per-task watchdog. fetchText already aborts on its own timeout, but in rare
+// cases a stalled body read isn't interrupted and a single host would hang its
+// pool worker forever — leaving runPool's await unsettled (the "unsettled
+// top-level await" warning). This caps the whole per-host task so the pool
+// always drains.
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`task watchdog: ${label} exceeded ${ms}ms`);
+      err.__watchdog = true;
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 const outStream = fs.createWriteStream(outPath, { flags: 'w' });
 
 const stats = { candidates: candidates.length, dead: 0, denied: 0, lowConfidence: 0, kept: 0, processed: 0 };
 const byPlatform = {};
 const PROGRESS_EVERY = 25;
+// Backstop budget for one host: liveness + JS-bundle fetches + rate wait.
+const TASK_BUDGET = args.timeout * (args.maxScripts + 1) + args.rateMs + 5000;
 
 console.log(`[classify] classifying ${candidates.length} candidates (concurrency=${args.concurrency}, timeout=${args.timeout}ms)…`);
+
+async function classifyOne(url) {
+  if (isDenied(url).denied) {
+    stats.denied++;
+    return;
+  }
+  await rateLimit(hostOf(url));
+
+  const live = await fetchText(url, { timeoutMs: args.timeout });
+  if (!live.ok) {
+    stats.dead++;
+    return;
+  }
+
+  const scripts = extractScriptSrcs(live.body, live.finalUrl).slice(0, args.maxScripts);
+  const jsBodies = [];
+  for (const s of scripts) {
+    const r = await fetchText(s, { timeoutMs: args.timeout, maxBytes: 900000 });
+    if (r.body) jsBodies.push(r.body);
+  }
+
+  const fp = fingerprint({ url, html: live.body, scripts: jsBodies, headers: live.headers });
+  if (fp.confidence < args.minConfidence) {
+    stats.lowConfidence++;
+    return;
+  }
+
+  outStream.write(`${JSON.stringify({
+    url,
+    platform: fp.platform,
+    confidence: fp.confidence,
+    supabaseUrl: fp.supabaseUrl,
+    anonKey: fp.anonKey,
+    signals: fp.signals,
+  })}\n`);
+  stats.kept++;
+  byPlatform[fp.platform] = (byPlatform[fp.platform] ?? 0) + 1;
+  console.log(`[classify] keep ${fp.platform} (${fp.confidence}) ${url}`);
+}
 
 await runPool(
   candidates,
   async (url) => {
     try {
-      if (isDenied(url).denied) {
-        stats.denied++;
-        return;
-      }
-      await rateLimit(hostOf(url));
-
-      const live = await fetchText(url, { timeoutMs: args.timeout });
-      if (!live.ok) {
-        stats.dead++;
-        return;
-      }
-
-      const scripts = extractScriptSrcs(live.body, live.finalUrl).slice(0, args.maxScripts);
-      const jsBodies = [];
-      for (const s of scripts) {
-        const r = await fetchText(s, { timeoutMs: args.timeout, maxBytes: 900000 });
-        if (r.body) jsBodies.push(r.body);
-      }
-
-      const fp = fingerprint({ url, html: live.body, scripts: jsBodies, headers: live.headers });
-      if (fp.confidence < args.minConfidence) {
-        stats.lowConfidence++;
-        return;
-      }
-
-      outStream.write(`${JSON.stringify({
-        url,
-        platform: fp.platform,
-        confidence: fp.confidence,
-        supabaseUrl: fp.supabaseUrl,
-        anonKey: fp.anonKey,
-        signals: fp.signals,
-      })}\n`);
-      stats.kept++;
-      byPlatform[fp.platform] = (byPlatform[fp.platform] ?? 0) + 1;
-      console.log(`[classify] keep ${fp.platform} (${fp.confidence}) ${url}`);
+      await withTimeout(classifyOne(url), TASK_BUDGET, url);
+    } catch (err) {
+      if (err && err.__watchdog) stats.dead++; // hung host → count as dead, move on
+      else stats.dead++;
     } finally {
       // Progress heartbeat so long runs over thousands of hosts don't look
       // frozen during stretches of dead / low-confidence targets.
@@ -162,10 +188,14 @@ await runPool(
       }
     }
   },
-  { concurrency: args.concurrency, onError: () => { stats.dead++; } },
+  { concurrency: args.concurrency },
 );
 
 await new Promise((resolve) => outStream.end(resolve));
 console.log(`\n[classify] candidates=${stats.candidates} kept=${stats.kept} dead=${stats.dead} denied=${stats.denied} low-confidence=${stats.lowConfidence}`);
 console.log(`[classify] by platform: ${JSON.stringify(byPlatform)}`);
 console.log(`[classify] targets: ${path.relative(PROJECT_ROOT, outPath)}`);
+
+// Results are written and flushed above. Exit cleanly so any socket left open
+// by an aborted fetch can't keep the process hanging after the work is done.
+process.exit(0);
