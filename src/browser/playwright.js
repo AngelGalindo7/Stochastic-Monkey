@@ -44,6 +44,11 @@ export async function launchPlaywright({ headful = false, userDataDir, storageSt
 
   let browser = null;
   let persistentCtx = null;
+  // Secondary browser for null-credential (anon) roles when persistentCtx is
+  // active. persistentCtx is a single-context launch — calling browser.newContext
+  // is unavailable — so anon gets its own ephemeral browser to guarantee a
+  // cookie-free baseline. See DECISION_LOG 011.
+  let anonBrowser = null;
   const contexts = new Map();
 
   if (userDataDir) {
@@ -57,15 +62,29 @@ export async function launchPlaywright({ headful = false, userDataDir, storageSt
   }
 
   async function contextFor(role) {
-    // Persistent contexts cannot be forked — all roles share one context, so
-    // role isolation is unavailable when userDataDir is active.
-    if (persistentCtx) return persistentCtx;
     if (contexts.has(role)) return contexts.get(role);
+
     const roleOpts = resolvedRoles?.[role];
-    const ctx = await browser.newContext({
-      viewport,
-      ...(roleOpts?.storageState ? { storageState: roleOpts.storageState } : {}),
-    });
+    const isNullRole = roleOpts === null;
+
+    // Persistent context covers all non-null roles; null-credential roles
+    // (anon) need their own ephemeral browser so the persistent session
+    // cannot bleed in via shared profile state.
+    if (persistentCtx && !isNullRole) return persistentCtx;
+
+    let ctx;
+    if (isNullRole && persistentCtx) {
+      if (!anonBrowser) {
+        anonBrowser = await chromium.launch({ headless: !headful, args });
+      }
+      ctx = await anonBrowser.newContext({ viewport });
+    } else {
+      ctx = await browser.newContext({
+        viewport,
+        ...(roleOpts?.storageState ? { storageState: roleOpts.storageState } : {}),
+      });
+    }
+
     contexts.set(role, ctx);
     return ctx;
   }
@@ -125,12 +144,10 @@ export async function launchPlaywright({ headful = false, userDataDir, storageSt
       return { raw: page, events, captures, engine: 'playwright', role };
     },
     async close() {
-      if (persistentCtx) {
-        await persistentCtx.close();
-      } else {
-        for (const ctx of contexts.values()) await ctx.close().catch(() => {});
-        if (browser) await browser.close();
-      }
+      if (persistentCtx) await persistentCtx.close().catch(() => {});
+      for (const ctx of contexts.values()) await ctx.close().catch(() => {});
+      if (browser) await browser.close().catch(() => {});
+      if (anonBrowser) await anonBrowser.close().catch(() => {});
     },
   };
 }
