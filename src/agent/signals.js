@@ -26,9 +26,10 @@ export const CONSOLE_ERROR_DENYLIST = [
 ];
 
 // Returns false when the console error's source URL is a browser extension or
-// a third-party origin. Inline scripts (no url) are treated as first-party
-// so inline analytics that slipped past the denylist can still be filtered
-// by the extension check above.
+// a third-party origin. Empty url falls through to return true (treated as
+// first-party inline script). Known gap: extension errors without a url field
+// are indistinguishable from inline scripts; the denylist above is the only
+// guard for that case.
 export function isFirstPartyConsoleError(event, targetOrigin) {
   const url = event.url ?? '';
   if (url.startsWith('chrome-extension://') || url.startsWith('moz-extension://')) return false;
