@@ -77,6 +77,11 @@ describe('signal consistency: known-anchor pairs', () => {
 // is not in the intentional-omission list below.
 const INTENTIONAL_ORACLE_ONLY = new Set([
   'HTTP_4XX_NAV', // navigational rename of HTTP_4XX — raw events still use HTTP_4XX
+  // Authz-replay verdicts are synthesized by the replay oracle, not raw page events,
+  // so they have no SIGNAL_SEVERITY counterpart by design. scoreState carries their
+  // severity directly (adversarial A1/A3).
+  'CROSS_ACCOUNT_LEAK',
+  'AUTHZ_UNCERTAIN',
 ]);
 
 describe('signal consistency: HARD_SIGNALS coverage in SIGNAL_SEVERITY', () => {

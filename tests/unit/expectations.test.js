@@ -45,6 +45,42 @@ describe('expectations.scoreState — bug detection (hard signals)', () => {
   });
 });
 
+describe('expectations.scoreState — two-tier authz verdicts (adversarial A1/A3)', () => {
+  it('CROSS_ACCOUNT_LEAK is auto-assert: a real bug, no review flag', () => {
+    const out = scoreState({ observed: tree(), hardSignals: ['CROSS_ACCOUNT_LEAK'] });
+    expect(out.tier).toBe('auto-assert');
+    expect(out.isBug).toBe(true);
+    expect(out.needsReview).toBe(false);
+    expect(out.severity).toBe('critical');
+    expect(out.signalType).toBe('CROSS_ACCOUNT_LEAK');
+  });
+
+  it('AUTHZ_UNCERTAIN is flag-for-review: never auto-asserts a bug', () => {
+    const out = scoreState({ observed: tree(), hardSignals: ['AUTHZ_UNCERTAIN'] });
+    expect(out.tier).toBe('flag-for-review');
+    expect(out.isBug).toBe(false);
+    expect(out.needsReview).toBe(true);
+    expect(out.hardSignalOverride).toBe(true);
+    expect(out.signalType).toBe('AUTHZ_UNCERTAIN');
+  });
+
+  it('a co-firing auto-assert signal always wins over AUTHZ_UNCERTAIN', () => {
+    const out = scoreState({ observed: tree(), hardSignals: ['AUTHZ_UNCERTAIN', 'CROSS_ACCOUNT_LEAK'] });
+    expect(out.signalType).toBe('CROSS_ACCOUNT_LEAK');
+    expect(out.isBug).toBe(true);
+    expect(out.needsReview).toBe(false);
+  });
+
+  it('AUTHZ_UNCERTAIN scores below every auto-assert signal', () => {
+    const autoAssert = Object.entries(HARD_SIGNALS).filter(([, s]) => s.tier === 'auto-assert');
+    for (const [type, spec] of autoAssert) {
+      expect(spec.score, `${type} must outrank AUTHZ_UNCERTAIN`).toBeGreaterThan(
+        HARD_SIGNALS.AUTHZ_UNCERTAIN.score,
+      );
+    }
+  });
+});
+
 describe('expectations.scoreState — novelty (no hard signal)', () => {
   it('never declares a bug from novelty alone', () => {
     const prev = tree([{ role: 'button', name: 'A' }]);
