@@ -12,6 +12,7 @@ import { clusterId } from './agent/stateAbstraction.js';
 import { candidateActions, sampleByPrior } from './agent/policy.js';
 import { MctsNode, descend, backprop } from './agent/mcts.js';
 import { scoreState } from './agent/expectations.js';
+import { checkDomFrozen, DOM_FROZEN_SETTLE_MS } from './agent/signals.js';
 import { initTelemetry, shutdownTelemetry, getTracer } from './observability/otel.js';
 import { Breadcrumbs } from './observability/breadcrumbs.js';
 import { writeBugReport } from './triage/triage.js';
@@ -323,6 +324,9 @@ async function main() {
           }
 
           const newEvents = page.events.slice(beforeEvents);
+          if (await checkDomFrozen(page, { settleMs: DOM_FROZEN_SETTLE_MS })) {
+            newEvents.push({ type: 'DOM_FROZEN' });
+          }
           const newCaptures = page.captures?.slice(beforeCaptures) ?? [];
           const observed = await snapshotPage(page.raw).catch(() => null);
           const observedUrl = page.raw.url();
