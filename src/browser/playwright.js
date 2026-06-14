@@ -65,6 +65,9 @@ export async function launchPlaywright({ headful = false, userDataDir, storageSt
     if (contexts.has(role)) return contexts.get(role);
 
     const roleOpts = resolvedRoles?.[role];
+    if (resolvedRoles && roleOpts === undefined) {
+      throw new Error(`playwright: role "${role}" is not declared in auth.roles`);
+    }
     const isNullRole = roleOpts === null;
 
     // Persistent context covers all non-null roles; null-credential roles
