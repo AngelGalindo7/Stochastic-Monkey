@@ -7,7 +7,9 @@ export async function fileGithubIssue({ title, body, env = process.env }) {
   }
   const { Octokit } = await import('@octokit/rest').catch(() => ({}));
   if (!Octokit) {
-    return { filed: false, reason: '@octokit/rest not installed' };
+    throw new Error(
+      'github.js: @octokit/rest is not installed. Run: npm install @octokit/rest (see docs/DECISION_LOG.md entry 006)',
+    );
   }
   const client = new Octokit({ auth: token });
   const res = await client.rest.issues.create({ owner, repo, title, body });

@@ -110,7 +110,7 @@ export async function launchPlaywright({ headful = false, userDataDir, storageSt
       const captures = attachPlaywrightCapture(page);
       attachCookieShim(page);
       await attachAccessibilityShim(page);
-      return { raw: page, events, captures };
+      return { raw: page, events, captures, engine: 'playwright' };
     },
     async close() {
       await context.close();

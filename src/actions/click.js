@@ -1,3 +1,5 @@
+import { queryByXPath } from './locate.js';
+
 export async function runClick({ page, target }) {
   const start = Date.now();
   if (!target?.name) {
@@ -5,7 +7,7 @@ export async function runClick({ page, target }) {
   }
   const xpath = buildXpathByName(target.role, target.name);
   try {
-    const handles = await page.raw.$$(xpath);
+    const handles = await queryByXPath(page, xpath);
     if (!handles.length) {
       return { success: false, error: 'no matching element', latencyMs: Date.now() - start };
     }
@@ -18,7 +20,7 @@ export async function runClick({ page, target }) {
 
 function buildXpathByName(role, name) {
   const escaped = name.replace(/'/g, '"');
-  if (role === 'link') return `xpath/.//a[normalize-space(.)='${escaped}']`;
-  if (role === 'button') return `xpath/.//button[normalize-space(.)='${escaped}']`;
-  return `xpath/.//*[@role='${role}' and normalize-space(.)='${escaped}']`;
+  if (role === 'link') return `//a[normalize-space(.)='${escaped}']`;
+  if (role === 'button') return `//button[normalize-space(.)='${escaped}']`;
+  return `//*[@role='${role}' and normalize-space(.)='${escaped}']`;
 }
