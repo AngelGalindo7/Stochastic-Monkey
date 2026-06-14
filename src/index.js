@@ -114,8 +114,9 @@ async function main() {
     headful: process.env.HEADFUL === 'true',
     userDataDir: persistSession ? path.resolve(PROJECT_ROOT, engine === 'playwright' ? '.playwright-data' : '.puppeteer-data') : undefined,
     storageState: config.browser?.storageState,
+    roles: config.auth?.roles,
   });
-  const page = await browser.newPage();
+  const page = await browser.newPage('user');
 
   const root = new MctsNode({ stateId: 'ROOT' });
   let firstBug = null;
