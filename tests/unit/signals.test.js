@@ -70,12 +70,12 @@ describe('pageEventsToHardSignals', () => {
     expect(signals).toContain('PAGEERROR');
   });
 
-  it('emits HTTP_5XX', () => {
+  it('emits HTTP_500 for a 500-class 5xx', () => {
     const { signals } = pageEventsToHardSignals(
       [{ type: 'HTTP_5XX', status: 500, url: 'https://example.com/api' }],
       ORIGIN,
     );
-    expect(signals).toContain('HTTP_5XX');
+    expect(signals).toContain('HTTP_500');
   });
 
   it('emits ASSET_4XX for non-noise requests', () => {
