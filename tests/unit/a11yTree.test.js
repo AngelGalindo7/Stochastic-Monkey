@@ -74,12 +74,13 @@ describe('a11yTree.listInteractiveNodes', () => {
   });
 });
 
-// Regression: getFileInputs was dropped during a11y rewrite and had to be
-// restored. This test guards the export so the omission is caught at test time
-// rather than at runtime when index.js fails to load.
+// Regression: getFileInputs must operate on the RAW page (page.$$eval) — the
+// same shape index.js passes as getFileInputs(page.raw). A merge once kept a
+// page.raw.$$eval variant that crashed every run on step 0; the mock mirrors the
+// real call site so that contract cannot silently break again.
 describe('a11yTree.getFileInputs', () => {
   function fakePage(els) {
-    return { raw: { $$eval: vi.fn(async (_sel, fn) => fn(els)) } };
+    return { $$eval: vi.fn(async (_sel, fn) => fn(els)) };
   }
 
   it('returns descriptors for named file inputs', async () => {
@@ -113,7 +114,11 @@ describe('a11yTree.getFileInputs', () => {
   it('queries input[type="file"] selector', async () => {
     const page = fakePage([]);
     await getFileInputs(page);
-    expect(page.raw.$$eval).toHaveBeenCalledWith('input[type="file"]', expect.any(Function));
+    expect(page.$$eval).toHaveBeenCalledWith('input[type="file"]', expect.any(Function));
+  });
+
+  it('returns empty for a Lightpanda page (no upload surface)', async () => {
+    expect(await getFileInputs({ _isLightpanda: true })).toEqual([]);
   });
 
   it('uses nth-of-type selector and exposes index when name and id are absent', async () => {
