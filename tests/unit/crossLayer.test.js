@@ -367,6 +367,79 @@ describe('checkCrossLayer — PUT / PATCH', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Action-endpoint guard — URLs that end with a verb, not the resource ID
+// ---------------------------------------------------------------------------
+
+describe('checkCrossLayer — action endpoint guard', () => {
+  it('skips POST to action endpoint (URL ends with verb, not ID)', async () => {
+    const client = makeClient([]);
+    const result = await checkCrossLayer({
+      captures: [makeCapture({
+        method: 'POST',
+        url: 'http://localhost:8000/api/items/42/favorite',
+        status: 200,
+        resource_id: { collection: 'items', id: '42' },
+        responseBody: null,
+      })],
+      client,
+      ...DEFAULTS,
+    });
+    expect(result.signal).toBeNull();
+    expect(client.fetch).not.toHaveBeenCalled();
+  });
+
+  it('skips DELETE to action endpoint (URL ends with verb, not ID)', async () => {
+    const client = makeClient([]);
+    const result = await checkCrossLayer({
+      captures: [makeCapture({
+        method: 'DELETE',
+        url: 'http://localhost:8000/api/items/42/cancel',
+        status: 204,
+        resource_id: { collection: 'items', id: '42' },
+        responseBody: null,
+      })],
+      client,
+      ...DEFAULTS,
+    });
+    expect(result.signal).toBeNull();
+    expect(client.fetch).not.toHaveBeenCalled();
+  });
+
+  it('skips PATCH to action endpoint', async () => {
+    const client = makeClient([]);
+    const result = await checkCrossLayer({
+      captures: [makeCapture({
+        method: 'PATCH',
+        url: 'http://localhost:8000/api/items/42/publish',
+        status: 200,
+        resource_id: { collection: 'items', id: '42' },
+        responseBody: null,
+      })],
+      client,
+      ...DEFAULTS,
+    });
+    expect(result.signal).toBeNull();
+    expect(client.fetch).not.toHaveBeenCalled();
+  });
+
+  it('does NOT skip DELETE /api/items/42 (URL ends with the resource ID)', async () => {
+    const client = makeClient([okGet()]);
+    const result = await checkCrossLayer({
+      captures: [makeCapture({
+        method: 'DELETE',
+        url: 'http://localhost:8000/api/items/42',
+        status: 204,
+        resource_id: { collection: 'items', id: '42' },
+      })],
+      client,
+      ...DEFAULTS,
+    });
+    expect(result.signal).toBe('STATE_NOT_DELETED');
+    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/42');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // No mutation / non-mutation captures
 // ---------------------------------------------------------------------------
 

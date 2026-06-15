@@ -80,6 +80,15 @@ function findMutation(captures, allowedDomains) {
   return null;
 }
 
+// Guard: the URL must end with the resource ID, not an action verb.
+// POST /api/items/42/favorite has resource_id {id:'42'} but ends with "favorite"
+// — it's an action endpoint, not a resource endpoint. Verifying it would produce
+// a false STATE_NOT_PERSISTED because there is no GET /api/items/42/favorite route.
+function urlEndsWithResourceId(cleanUrl, resourceId) {
+  const lastSeg = cleanUrl.split('/').filter(Boolean).pop() ?? '';
+  return lastSeg === String(resourceId.id);
+}
+
 // Resolve the URL to GET for verification and the check mode.
 //   DELETE / PUT / PATCH: resource ID is in the request URL (W3 already parsed it).
 //   POST to collection:   resource ID comes from the response body.
@@ -90,11 +99,13 @@ function resolveVerify(capture) {
 
   if (method === 'DELETE' || method === 'PUT' || method === 'PATCH') {
     if (!resource_id) return null; // can't attribute without an ID in the URL
+    if (!urlEndsWithResourceId(cleanUrl, resource_id)) return null; // action endpoint
     return { verifyUrl: cleanUrl, mode: method === 'DELETE' ? 'delete' : 'persist' };
   }
 
   if (method === 'POST') {
     if (resource_id) {
+      if (!urlEndsWithResourceId(cleanUrl, resource_id)) return null; // action endpoint
       return { verifyUrl: cleanUrl, mode: 'persist' };
     }
     const createdId = tryExtractCreatedId(responseBody);
