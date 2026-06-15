@@ -83,6 +83,7 @@ describe('signal consistency: known-anchor pairs', () => {
 const INTENTIONAL_ORACLE_ONLY = new Set([
   'HTTP_4XX_NAV', // navigational rename of HTTP_4XX — raw events still use HTTP_4XX
   'HTTP_500', // 500-class rename of HTTP_5XX (excludes 503/504) — raw events still use HTTP_5XX
+  'HTTP_503_504', // 503/504 split of HTTP_5XX — raw events still use HTTP_5XX
   // Authz-replay verdicts are synthesized by the replay oracle, not raw page events,
   // so they have no SIGNAL_SEVERITY counterpart by design. scoreState carries their
   // severity directly (adversarial A1/A3).
