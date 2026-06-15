@@ -173,6 +173,21 @@ observability:
     enabled: true
     path: BUG/${RUN_ID}/breadcrumbs.jsonl
 
+oracle:
+  crossLayer:
+    enabled: true
+    # Retry the GET this many times before flagging. Covers the UI-success-vs-
+    # committed-state race on eventually-consistent backends (read replicas, async
+    # commit paths). Total wait ≈ (pollAttempts - 1) × pollDelayMs.
+    pollAttempts: 3
+    pollDelayMs: 500        # ms between retries
+    # What "deleted" looks like for this target. RFC 9110 allows 404 or 410.
+    # Add 403 if the target hides deleted resources behind a permission check.
+    goneStatuses: [404, 410]
+    # Set true when the target uses soft-delete (logical delete, row stays in DB).
+    # A 200 on GET after DELETE is then correct behaviour, not a bug.
+    softDelete: false
+
 triage:
   bugRoot: BUG
   github:
