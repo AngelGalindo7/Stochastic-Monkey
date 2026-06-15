@@ -9,6 +9,62 @@ const ALLOWED_GRANULARITIES = new Set(['fine', 'medium', 'coarse']);
 const ALLOWED_OTEL_EXPORTERS = new Set(['file', 'otlp', 'both']);
 const ALLOWED_ENGINES = new Set(['puppeteer', 'playwright']);
 
+function validateAuthBlock(block, prefix) {
+  if (block.cookies !== undefined) {
+    if (!Array.isArray(block.cookies)) {
+      throw new Error(`config: ${prefix}.cookies must be an array if provided`);
+    }
+    for (const [i, cookie] of block.cookies.entries()) {
+      if (!cookie || typeof cookie !== 'object') {
+        throw new Error(`config: ${prefix}.cookies[${i}] must be an object`);
+      }
+      if (!cookie.name || typeof cookie.value !== 'string') {
+        throw new Error(`config: ${prefix}.cookies[${i}] requires "name" and string "value"`);
+      }
+      if (!cookie.domain && !cookie.url) {
+        throw new Error(`config: ${prefix}.cookies[${i}] requires either "domain" or "url"`);
+      }
+    }
+  }
+
+  if (block.localStorage !== undefined) {
+    if (!block.localStorage || typeof block.localStorage !== 'object' || Array.isArray(block.localStorage)) {
+      throw new Error(`config: ${prefix}.localStorage must be an object map of string keys to string values`);
+    }
+    for (const [k, v] of Object.entries(block.localStorage)) {
+      if (typeof v !== 'string') {
+        throw new Error(`config: ${prefix}.localStorage["${k}"] must be a string`);
+      }
+    }
+  }
+
+  if (block.persistSession !== undefined && typeof block.persistSession !== 'boolean') {
+    throw new Error(`config: ${prefix}.persistSession must be a boolean if provided`);
+  }
+
+  if (block.refreshUrl !== undefined) {
+    if (typeof block.refreshUrl !== 'string' || !/^https?:\/\//i.test(block.refreshUrl)) {
+      throw new Error(`config: ${prefix}.refreshUrl must be an http(s) URL if provided`);
+    }
+  }
+
+  if (block.login !== undefined) {
+    const login = block.login;
+    if (!login || typeof login !== 'object' || Array.isArray(login)) {
+      throw new Error(`config: ${prefix}.login must be an object if provided`);
+    }
+    if (typeof login.url !== 'string' || !/^https?:\/\//i.test(login.url)) {
+      throw new Error(`config: ${prefix}.login.url must be an http(s) URL`);
+    }
+    if (typeof login.email !== 'string' || !login.email.length) {
+      throw new Error(`config: ${prefix}.login.email must be a non-empty string`);
+    }
+    if (typeof login.password !== 'string' || !login.password.length) {
+      throw new Error(`config: ${prefix}.login.password must be a non-empty string`);
+    }
+  }
+}
+
 export function validate(config) {
   if (!config || typeof config !== 'object') {
     throw new Error('config: root must be an object');
@@ -83,32 +139,8 @@ export function validate(config) {
     }
   }
 
-  if (config.auth?.cookies !== undefined) {
-    if (!Array.isArray(config.auth.cookies)) {
-      throw new Error('config: auth.cookies must be an array if provided');
-    }
-    for (const [i, cookie] of config.auth.cookies.entries()) {
-      if (!cookie || typeof cookie !== 'object') {
-        throw new Error(`config: auth.cookies[${i}] must be an object`);
-      }
-      if (!cookie.name || typeof cookie.value !== 'string') {
-        throw new Error(`config: auth.cookies[${i}] requires "name" and string "value"`);
-      }
-      if (!cookie.domain && !cookie.url) {
-        throw new Error(`config: auth.cookies[${i}] requires either "domain" or "url"`);
-      }
-    }
-  }
-
-  if (config.auth?.localStorage !== undefined) {
-    if (!config.auth.localStorage || typeof config.auth.localStorage !== 'object' || Array.isArray(config.auth.localStorage)) {
-      throw new Error('config: auth.localStorage must be an object map of string keys to string values');
-    }
-    for (const [k, v] of Object.entries(config.auth.localStorage)) {
-      if (typeof v !== 'string') {
-        throw new Error(`config: auth.localStorage["${k}"] must be a string`);
-      }
-    }
+  if (config.auth !== undefined) {
+    validateAuthBlock(config.auth, 'auth');
   }
 
   if (config.browser?.engine !== undefined && !ALLOWED_ENGINES.has(config.browser.engine)) {
@@ -119,29 +151,16 @@ export function validate(config) {
     throw new Error('config: browser.storageState must be a string path if provided');
   }
 
-  if (config.auth?.persistSession !== undefined && typeof config.auth.persistSession !== 'boolean') {
-    throw new Error('config: auth.persistSession must be a boolean if provided');
-  }
-
-  if (config.auth?.refreshUrl !== undefined) {
-    if (typeof config.auth.refreshUrl !== 'string' || !/^https?:\/\//i.test(config.auth.refreshUrl)) {
-      throw new Error('config: auth.refreshUrl must be an http(s) URL if provided');
+  if (config.auth?.roles !== undefined) {
+    if (!config.auth.roles || typeof config.auth.roles !== 'object' || Array.isArray(config.auth.roles)) {
+      throw new Error('config: auth.roles must be an object map of role names to auth configs');
     }
-  }
-
-  if (config.auth?.login !== undefined) {
-    const login = config.auth.login;
-    if (!login || typeof login !== 'object' || Array.isArray(login)) {
-      throw new Error('config: auth.login must be an object if provided');
-    }
-    if (typeof login.url !== 'string' || !/^https?:\/\//i.test(login.url)) {
-      throw new Error('config: auth.login.url must be an http(s) URL');
-    }
-    if (typeof login.email !== 'string' || !login.email.length) {
-      throw new Error('config: auth.login.email must be a non-empty string');
-    }
-    if (typeof login.password !== 'string' || !login.password.length) {
-      throw new Error('config: auth.login.password must be a non-empty string');
+    for (const [role, roleAuth] of Object.entries(config.auth.roles)) {
+      if (roleAuth === null) continue;
+      if (typeof roleAuth !== 'object' || Array.isArray(roleAuth)) {
+        throw new Error('config: auth.roles["' + role + '"] must be an object or null');
+      }
+      validateAuthBlock(roleAuth, 'auth.roles["' + role + '"]');
     }
   }
 

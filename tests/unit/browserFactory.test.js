@@ -137,6 +137,12 @@ describe('browserFactory.createBrowser — engine dispatch', () => {
     );
   });
 
+  it('passes roles through to launchPlaywright', async () => {
+    const roles = { user: { storageState: '/tmp/user.json' }, anon: null };
+    await createBrowser({ engine: 'playwright', roles });
+    expect(launchPlaywright).toHaveBeenCalledWith(expect.objectContaining({ roles }));
+  });
+
   // Win32 guard: on Windows, lightpanda is always bypassed and puppeteer is
   // used instead. Even if preferLightpanda=true, the result should be puppeteer
   // (the lightpanda mock throws NotImplementedError, simulating the guard).

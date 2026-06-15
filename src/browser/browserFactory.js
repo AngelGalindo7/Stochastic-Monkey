@@ -56,9 +56,9 @@ export function forwardEventsTo(srcArr, dstArr) {
   };
 }
 
-export async function createBrowser({ engine = 'playwright', preferLightpanda = true, headful = false, userDataDir, storageState } = {}) {
+export async function createBrowser({ engine = 'playwright', preferLightpanda = true, headful = false, userDataDir, storageState, roles } = {}) {
   if (engine === 'playwright') {
-    return launchPlaywright({ headful, userDataDir, storageState });
+    return launchPlaywright({ headful, userDataDir, storageState, roles });
   }
 
   const launchOpts = { headful, ...(userDataDir ? { userDataDir } : {}) };
@@ -91,8 +91,8 @@ export async function createBrowser({ engine = 'playwright', preferLightpanda = 
   return {
     kind: 'lightpanda+fallback',
     raw: active.raw,
-    async newPage() {
-      const p = await active.newPage();
+    async newPage(role = 'user') {
+      const p = await active.newPage(role);
       const pageRef = { current: p.raw, lastUrl: '' };
       const eventsBacking = p.events;
       const capturesBacking = p.captures ?? [];
