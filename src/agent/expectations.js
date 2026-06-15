@@ -21,8 +21,10 @@ export const HARD_SIGNALS = {
   HTTP_500: { score: 1.0, severity: 'critical', tier: 'auto-assert' },
   HTTP_4XX_NAV: { score: 0.8, severity: 'medium', tier: 'auto-assert' },
   ASSET_4XX: { score: 0.9, severity: 'medium', tier: 'auto-assert' },
-  PERF_BREACH: { score: 0.6, severity: 'low', tier: 'auto-assert' },
-  CONSOLE_ERROR: { score: 0.7, severity: 'medium', tier: 'auto-assert' },
+  // local latency is dominated by environment noise; threshold crossings are not reproducible across machines.
+  PERF_BREACH: { score: 0.6, severity: 'low', tier: 'flag-for-review' },
+  // first-party but app-intentional patterns (error boundaries, fetch guards) are indistinguishable from crashes.
+  CONSOLE_ERROR: { score: 0.7, severity: 'medium', tier: 'flag-for-review' },
   DOM_FROZEN: { score: 0.85, severity: 'medium', tier: 'auto-assert' },
 
   // Authorization-replay verdicts, emitted by the future replay oracle (the
