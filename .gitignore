@@ -29,6 +29,8 @@ build/
 # Generated QA artefacts
 BUG/*/
 !BUG/.gitkeep
+FLAGGED/*/
+!FLAGGED/.gitkeep
 tests/smoke/BUG/
 repro.js
 crash-*.png

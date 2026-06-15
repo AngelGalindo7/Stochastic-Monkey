@@ -6,6 +6,11 @@ export function buildBugFolderName({ ts, seed, severity, root = 'BUG' }) {
   return path.join(root, `${safeTs}__seed${seed}__${severity}`);
 }
 
+export function buildFlaggedFolderName({ ts, seed, severity, root = 'FLAGGED' }) {
+  const safeTs = ts.replace(/:/g, '-').replace(/\..+Z$/, 'Z');
+  return path.join(root, `${safeTs}__seed${seed}__${severity}`);
+}
+
 export async function writeBugReport({
   rootDir,
   bugRoot = 'BUG',
@@ -70,6 +75,76 @@ export async function writeBugReport({
   return { folder, folderRel };
 }
 
+export async function writeFlaggedReport({
+  rootDir,
+  bugRoot = 'FLAGGED',
+  seed,
+  severity,
+  signal,
+  pageUrl,
+  breadcrumbs,
+  screenshotBuffer = null,
+  domHtml = '',
+  surpriseScore = null,
+  prediction = null,
+  evidence = [],
+  tracePath = null,
+  stepsDirRel = null,
+  config,
+  reason = '',
+}) {
+  const ts = new Date().toISOString();
+  const folderRel = buildFlaggedFolderName({ ts, seed, severity, root: bugRoot });
+  const folder = path.resolve(rootDir, folderRel);
+  fs.mkdirSync(folder, { recursive: true });
+
+  if (screenshotBuffer) {
+    fs.writeFileSync(path.join(folder, 'screenshot.png'), screenshotBuffer);
+  }
+  if (domHtml) {
+    fs.writeFileSync(path.join(folder, 'dom.html'), domHtml);
+  }
+  fs.writeFileSync(
+    path.join(folder, 'breadcrumbs.jsonl'),
+    breadcrumbs.map((b) => JSON.stringify(b)).join('\n'),
+  );
+  if (tracePath) {
+    const resolvedTrace = path.resolve(rootDir, tracePath);
+    if (fs.existsSync(resolvedTrace)) {
+      fs.copyFileSync(resolvedTrace, path.join(folder, 'trace.jsonl'));
+    }
+  }
+
+  const flaggedMd = renderFlaggedMd({
+    pageUrl,
+    severity,
+    signal,
+    seed,
+    breadcrumbs,
+    prediction,
+    surpriseScore,
+    folderRel,
+    stepsDirRel,
+    evidence,
+    reason,
+  });
+  fs.writeFileSync(path.join(folder, 'flagged.md'), flaggedMd);
+
+  const repro = renderRepro({ seed, pageUrl, configPath: 'config.yaml' });
+  fs.writeFileSync(path.join(folder, 'repro.js'), repro);
+
+  fs.writeFileSync(
+    path.join(folder, 'severity.json'),
+    JSON.stringify(
+      { tier: 'flag-for-review', confidence: 'low', signal, severity, score: surpriseScore, reason },
+      null,
+      2,
+    ),
+  );
+
+  return { folder, folderRel };
+}
+
 function renderBugMd({
   pageUrl,
   severity,
@@ -108,6 +183,69 @@ function renderBugMd({
     '',
     evidenceBlock,
     '## Steps the agent took before failure',
+    '',
+    stepLines || '(no action breadcrumbs recorded)',
+    '',
+    prediction ? `## Predicted outcome\n\n> ${prediction}\n` : '',
+    '## How to reproduce',
+    '',
+    '```',
+    `node ${folderRel.replace(/\\/g, '/')}/repro.js`,
+    '```',
+    '',
+    'See `breadcrumbs.jsonl` for the full event log, `trace.jsonl` for OTel spans, ' +
+      'and `steps/<n>.png` (in the run-id folder) for the per-step screenshot timeline.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function renderFlaggedMd({
+  pageUrl,
+  severity,
+  signal,
+  seed,
+  breadcrumbs,
+  prediction,
+  surpriseScore,
+  folderRel,
+  stepsDirRel,
+  evidence = [],
+  reason = '',
+}) {
+  const stepLines = breadcrumbs
+    .filter((b) => b.type === 'action' || b.type === 'navigate')
+    .map((b, i) => `${i + 1}. ${b.summary}`)
+    .join('\n');
+
+  const evidenceBlock = evidence.length
+    ? [
+        '## Evidence (raw page-level signals)',
+        '',
+        ...evidence.map((e) => `- **${e.signal}** — ${e.detail}`),
+        '',
+      ].join('\n')
+    : '';
+
+  return [
+    `# FLAGGED FOR REVIEW — ${signal}`,
+    '',
+    '**This is not a confirmed bug. The signal is ambiguous. Human review required.**',
+    '',
+    `**URL:** ${pageUrl}`,
+    `**Seed:** ${seed}`,
+    `**Signal:** ${signal}`,
+    `**Severity:** ${severity}`,
+    surpriseScore !== null ? `**Surprise score:** ${surpriseScore.toFixed(2)}` : '',
+    `**Folder:** ${folderRel}`,
+    stepsDirRel ? `**Step screenshots:** ${stepsDirRel.replace(/\\/g, '/')}/` : '',
+    '',
+    '## Why this is ambiguous',
+    '',
+    reason || '(no reason provided)',
+    '',
+    evidenceBlock,
+    '## Steps the agent took before flagging',
     '',
     stepLines || '(no action breadcrumbs recorded)',
     '',
