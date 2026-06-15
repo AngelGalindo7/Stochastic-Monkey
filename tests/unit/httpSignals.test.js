@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { pageEventsToHardSignals, isNoiseUrl } from '../../src/perception/httpSignals.js';
 
 describe('httpSignals.pageEventsToHardSignals — HTTP-code-driven oracle', () => {
-  it('5xx on any request is always a bug', () => {
+  it('a 500-class 5xx auto-asserts HTTP_500', () => {
     const { signals } = pageEventsToHardSignals([
       { type: 'HTTP_5XX', url: 'http://app/api/orders', status: 500, resourceType: 'fetch' },
     ]);
-    expect(signals).toContain('HTTP_5XX');
+    expect(signals).toContain('HTTP_500');
   });
 
   it('4xx on a document request is a broken-route bug', () => {
@@ -77,21 +77,31 @@ describe('httpSignals.pageEventsToHardSignals — HTTP-code-driven oracle', () =
     expect(withoutType).toHaveLength(0);
   });
 
-  it('5xx is always a hard signal regardless of resourceType', () => {
-    const { signals: withType } = pageEventsToHardSignals([
-      { type: 'HTTP_5XX', url: 'http://app/api', status: 503, resourceType: 'fetch' },
-    ]);
-    expect(withType).toContain('HTTP_5XX');
+  it('a 500-class 5xx auto-asserts HTTP_500 regardless of resourceType', () => {
+    for (const resourceType of ['fetch', undefined, 'document']) {
+      const { signals } = pageEventsToHardSignals([
+        { type: 'HTTP_5XX', url: 'http://app/api', status: 502, resourceType },
+      ]);
+      expect(signals, `status 502 / resourceType=${resourceType}`).toContain('HTTP_500');
+    }
+  });
 
-    const { signals: withoutType } = pageEventsToHardSignals([
-      { type: 'HTTP_5XX', url: 'http://app/api', status: 503, resourceType: undefined },
-    ]);
-    expect(withoutType).toContain('HTTP_5XX');
-
-    const { signals: asDocument } = pageEventsToHardSignals([
-      { type: 'HTTP_5XX', url: 'http://app/page', status: 503, resourceType: 'document' },
-    ]);
-    expect(asDocument).toContain('HTTP_5XX');
+  // Adversarial finding B10: 503 (rate limit / maintenance) and 504 (upstream
+  // gateway timeout) are legitimate, retryable infra responses — not server
+  // faults. They are flagged for review (HTTP_503_504 evidence), never
+  // auto-asserted, regardless of resourceType.
+  it('503 and 504 are flag-for-review, never auto-asserted', () => {
+    for (const status of [503, 504]) {
+      for (const resourceType of ['fetch', undefined, 'document']) {
+        const { signals, evidence } = pageEventsToHardSignals([
+          { type: 'HTTP_5XX', url: 'http://app/api', status, resourceType },
+        ]);
+        const ctx = `status ${status} / resourceType=${resourceType}`;
+        expect(signals, ctx).not.toContain('HTTP_500');
+        expect(signals, ctx).toHaveLength(0);
+        expect(evidence.some((e) => e.signal === 'HTTP_503_504'), ctx).toBe(true);
+      }
+    }
   });
 });
 

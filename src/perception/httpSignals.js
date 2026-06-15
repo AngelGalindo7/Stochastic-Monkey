@@ -22,10 +22,17 @@ export function isNoiseUrl(url) {
 // rejection of bad input and must NOT auto-fire a bug.
 const ASSET_RESOURCE_TYPES = new Set(['image', 'stylesheet', 'font', 'media', 'script', 'texttrack']);
 
+// Status codes that are 5xx but not unambiguous server faults: 503 (rate limit /
+// maintenance window) and 504 (upstream gateway timeout) are legitimate,
+// retryable infra responses, not defects in the app under test. They are flagged
+// for review (HTTP_503_504 evidence) rather than auto-asserted as bugs.
+const REVIEW_5XX = new Set([503, 504]);
+
 // Map captured page events to the deterministic bug oracle. HTTP status codes
-// drive this — a 5xx is always a server fault; a 4xx is classified by the
-// request it answered: navigation (broken route) and assets are bugs, API
-// validation 4xx is recorded as evidence only.
+// drive this. A 500-class 5xx (500/501/502/505+) is a server fault that
+// auto-asserts the HTTP_500 hard signal; 503/504 are flagged for review (see
+// REVIEW_5XX). A 4xx is classified by the request it answered: navigation
+// (broken route) and assets are bugs, API validation 4xx is evidence only.
 export function pageEventsToHardSignals(events, targetOrigin = '') {
   const out = [];
   const evidence = [];
@@ -34,8 +41,14 @@ export function pageEventsToHardSignals(events, targetOrigin = '') {
       out.push('PAGEERROR');
       evidence.push({ signal: 'PAGEERROR', detail: e.message });
     } else if (e.type === 'HTTP_5XX') {
-      out.push('HTTP_5XX');
-      evidence.push({ signal: 'HTTP_5XX', detail: `${e.status} ${e.url}` });
+      if (REVIEW_5XX.has(e.status)) {
+        // 503/504: credible but ambiguous — record for the deduction engine to
+        // review, never auto-assert a bug (cf. API_4XX).
+        evidence.push({ signal: 'HTTP_503_504', detail: `${e.status} ${e.url}` });
+      } else {
+        out.push('HTTP_500');
+        evidence.push({ signal: 'HTTP_500', detail: `${e.status} ${e.url}` });
+      }
     } else if (e.type === 'HTTP_4XX' && !isNoiseUrl(e.url)) {
       if (e.resourceType === 'document') {
         out.push('HTTP_4XX_NAV');

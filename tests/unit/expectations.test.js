@@ -19,23 +19,23 @@ describe('expectations.scoreState — bug detection (hard signals)', () => {
   beforeEach(() => complete.mockReset());
 
   it('never calls the LLM', () => {
-    scoreState({ observed: tree(), hardSignals: ['HTTP_5XX'] });
+    scoreState({ observed: tree(), hardSignals: ['HTTP_500'] });
     scoreState({ observed: tree(), hardSignals: [] });
     expect(complete).not.toHaveBeenCalled();
   });
 
   it('flags isBug=true with the hard-signal spec score/severity', () => {
-    const out = scoreState({ observed: tree(), hardSignals: ['HTTP_5XX'] });
+    const out = scoreState({ observed: tree(), hardSignals: ['HTTP_500'] });
     expect(out.isBug).toBe(true);
-    expect(out.score).toBe(HARD_SIGNALS.HTTP_5XX.score);
+    expect(out.score).toBe(HARD_SIGNALS.HTTP_500.score);
     expect(out.severity).toBe('critical');
-    expect(out.signalType).toBe('HTTP_5XX');
+    expect(out.signalType).toBe('HTTP_500');
     expect(out.hardSignalOverride).toBe(true);
   });
 
   it('picks the highest-score signal when several fire', () => {
-    const out = scoreState({ observed: tree(), hardSignals: ['ASSET_4XX', 'HTTP_5XX', 'PERF_BREACH'] });
-    expect(out.signalType).toBe('HTTP_5XX');
+    const out = scoreState({ observed: tree(), hardSignals: ['ASSET_4XX', 'HTTP_500', 'PERF_BREACH'] });
+    expect(out.signalType).toBe('HTTP_500');
   });
 
   it('treats HTTP_4XX_NAV as a bug', () => {
