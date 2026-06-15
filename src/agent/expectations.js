@@ -9,18 +9,36 @@ function complete(opts) {
   return completeOpenai(opts);
 }
 
-// The bug oracle. Each entry is a deterministic, unambiguous fault — primarily
-// HTTP status codes plus uncaught page errors. When any of these fire, the step
-// is a bug regardless of how "novel" the resulting state looks. The LLM is NOT
-// consulted for this verdict (see DECISION_LOG: HTTP-code-driven detection).
+// The bug oracle. Each entry is a deterministic fault verdict. A `tier` separates
+// two trust levels:
+//   auto-assert     — near-always-right; fires a bug and may seed a generated test.
+//   flag-for-review — credible but ambiguous; surfaced for a human, never auto-asserted.
+// The LLM is NOT consulted for any of these (see DECISION_LOG: HTTP-code-driven
+// detection). A missing `tier` defaults to auto-assert.
 export const HARD_SIGNALS = {
-  PAGEERROR: { score: 1.0, severity: 'high' },
-  HTTP_5XX: { score: 1.0, severity: 'critical' },
-  HTTP_4XX_NAV: { score: 0.8, severity: 'medium' },
-  ASSET_4XX: { score: 0.9, severity: 'medium' },
-  PERF_BREACH: { score: 0.6, severity: 'low' },
-  CONSOLE_ERROR: { score: 0.7, severity: 'medium' },
-  DOM_FROZEN: { score: 0.85, severity: 'medium' },
+  PAGEERROR: { score: 1.0, severity: 'high', tier: 'auto-assert' },
+  HTTP_5XX: { score: 1.0, severity: 'critical', tier: 'auto-assert' },
+  HTTP_4XX_NAV: { score: 0.8, severity: 'medium', tier: 'auto-assert' },
+  ASSET_4XX: { score: 0.9, severity: 'medium', tier: 'auto-assert' },
+  PERF_BREACH: { score: 0.6, severity: 'low', tier: 'auto-assert' },
+  CONSOLE_ERROR: { score: 0.7, severity: 'medium', tier: 'auto-assert' },
+  DOM_FROZEN: { score: 0.85, severity: 'medium', tier: 'auto-assert' },
+
+  // Authorization-replay verdicts, emitted by the future replay oracle (the
+  // recorder/replayer/orchestrator wiring lands separately). Split across the two
+  // tiers because authz replay is heuristic: Autorize's own docs warn its
+  // response-comparison fingerprints yield both false positives and false negatives,
+  // so it cannot share the auto-assert tier wholesale (adversarial finding A1/A3).
+  //   CROSS_ACCOUNT_LEAK is auto-assert ONLY because the oracle fires it solely when
+  //   role B's 200 still carries role A's owned sensitive fields after field-level
+  //   body scrubbing — an unambiguous data diff, not a status-only guess.
+  //   AUTHZ_UNCERTAIN is the flag-for-review bucket for every ambiguous case the spec
+  //   enumerates (signed / capability-URL routing, un-refreshable per-request nonce, a
+  //   CSRF refresh that could explain the 200, infra 403/429 vs authz 403). Its score
+  //   sits below every auto-assert signal so a co-firing real signal always wins
+  //   selection, and it never auto-generates a test.
+  CROSS_ACCOUNT_LEAK: { score: 1.0, severity: 'critical', tier: 'auto-assert' },
+  AUTHZ_UNCERTAIN: { score: 0.5, severity: 'low', tier: 'flag-for-review' },
 };
 
 // LLM-backed prediction of an action's expected outcome. No longer called from
@@ -53,13 +71,19 @@ export function scoreState({
 }) {
   const hard = highestHardSignal(hardSignals);
   if (hard) {
+    const tier = hard.spec.tier ?? 'auto-assert';
+    const autoAssert = tier === 'auto-assert';
     return {
       score: hard.spec.score,
       severity: hard.spec.severity,
-      isBug: true,
+      // auto-assert fires a real bug; flag-for-review is surfaced for a human and
+      // must never auto-assert a bug or seed a generated test (adversarial A1/A3).
+      isBug: autoAssert,
+      needsReview: !autoAssert,
+      tier,
       hardSignalOverride: true,
       signalType: hard.type,
-      reason: `hard signal: ${hard.type}`,
+      reason: `${autoAssert ? 'hard signal' : 'flag-for-review'}: ${hard.type}`,
     };
   }
 
@@ -76,6 +100,8 @@ export function scoreState({
     score: nov.score,
     severity: 'info',
     isBug: false,
+    needsReview: false,
+    tier: null,
     hardSignalOverride: false,
     signalType: null,
     reason: nov.reason,
