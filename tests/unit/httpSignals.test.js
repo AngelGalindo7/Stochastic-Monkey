@@ -88,9 +88,9 @@ describe('httpSignals.pageEventsToHardSignals — HTTP-code-driven oracle', () =
 
   // Adversarial finding B10: 503 (rate limit / maintenance) and 504 (upstream
   // gateway timeout) are legitimate, retryable infra responses — not server
-  // faults. They are flagged for review (HTTP_503_504 evidence), never
-  // auto-asserted, regardless of resourceType.
-  it('503 and 504 are flag-for-review, never auto-asserted', () => {
+  // faults. They emit the HTTP_503_504 flag-for-review signal (and matching
+  // evidence), never the HTTP_500 auto-assert, regardless of resourceType.
+  it('emits HTTP_503_504 flag-for-review signal, never HTTP_500 auto-assert', () => {
     for (const status of [503, 504]) {
       for (const resourceType of ['fetch', undefined, 'document']) {
         const { signals, evidence } = pageEventsToHardSignals([
@@ -98,7 +98,8 @@ describe('httpSignals.pageEventsToHardSignals — HTTP-code-driven oracle', () =
         ]);
         const ctx = `status ${status} / resourceType=${resourceType}`;
         expect(signals, ctx).not.toContain('HTTP_500');
-        expect(signals, ctx).toHaveLength(0);
+        expect(signals, ctx).toContain('HTTP_503_504');
+        expect(signals, ctx).toHaveLength(1);
         expect(evidence.some((e) => e.signal === 'HTTP_503_504'), ctx).toBe(true);
       }
     }
