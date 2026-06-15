@@ -37,6 +37,15 @@ Numbered, monotonic, never renumbered. Format `### NNN — Title` then 3–6 bul
 - **Alternatives considered:** Datadog (rejected — paid SaaS), Sentry (rejected — overkill for current scale), SigNoz self-hosted (rejected — that's a whole other deployment).
 - **Impact:** `src/observability/otel.js` wires the file exporter. Production deploy can add an OTLP exporter alongside without removing the file one.
 
+### 006 — Promote HTTP 503/504 to flag-for-review hard signal
+
+- **Context:** `httpSignals.js` previously only pushed `HTTP_503_504` to `evidence`, never to `out` (the signals array). This meant `scoreState()` received an empty `hardSignals` array on 503/504-only steps and returned `isBug: false, needsReview: false` — the finding evaporated with no artifact written.
+- **Decision:** Push `'HTTP_503_504'` to `out` in the `REVIEW_5XX` branch of `pageEventsToHardSignals`, and add `HTTP_503_504: { score: 0.5, severity: 'low', tier: 'flag-for-review' }` to `HARD_SIGNALS` in `expectations.js`. `scoreState()` now returns `needsReview: true` on 503/504, and `writeFlaggedReport()` writes an artifact.
+- **Why 503/504 are not auto-assert:** These codes are legitimately ambiguous — 503 covers maintenance windows and rate limiting; 504 covers upstream gateway timeouts. Neither unambiguously indicates an application defect. They must not share the `HTTP_500` auto-assert tier (which fires only on 500/501/502/505+ where no valid non-fault interpretation exists).
+- **Why evidence-only was insufficient:** A 503 or 504 triggered by an action the monkey just took is a credible signal worth surfacing. Silently dropping it means a sustained 503 on a critical API path produces zero output, defeating the purpose of the browser-event monitoring layer.
+- **What score 0.5 and severity low represent:** Score 0.5 is below every auto-assert signal so a co-firing real signal always wins `highestHardSignal` selection. Severity low reflects that the response may resolve on retry and carries no field-level evidence of data corruption.
+- **Downstream impact:** On any step where a 503 or 504 is the only page event, `scoreState()` returns `needsReview: true` and `writeFlaggedReport()` writes a `FLAGGED/` artifact with `tier: flag-for-review, confidence: low`. The run continues; exit code is 0.
+
 ### 005 — Vitest unit tests only, no live-browser tests in CI
 
 - **Context:** Puppeteer in CI is famously flaky (Chromium sandbox, network races, font installation). Cypress / Playwright would solve that but add weight.
