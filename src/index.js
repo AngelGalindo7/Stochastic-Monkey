@@ -436,7 +436,11 @@ async function main() {
       const armSuffix = role === 'user' ? '' : `-${role}`;
 
       const bcBasePath = config.observability?.breadcrumbs?.path ?? `BUG/${runId}/breadcrumbs.jsonl`;
-      const bcPath = bcBasePath.replace('.jsonl', `${armSuffix}.jsonl`);
+      let bcPath = bcBasePath;
+      if (armSuffix) {
+        const { dir, name, ext } = path.parse(bcBasePath);
+        bcPath = path.join(dir, `${name}${armSuffix}${ext || '.jsonl'}`);
+      }
 
       const breadcrumbs = new Breadcrumbs({
         filePath: bcPath,
