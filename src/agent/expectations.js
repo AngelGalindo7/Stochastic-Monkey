@@ -14,11 +14,12 @@ function complete(opts) {
 //   auto-assert     — near-always-right; fires a bug and may seed a generated test.
 //   flag-for-review — credible but ambiguous; surfaced for a human, never auto-asserted.
 // The LLM is NOT consulted for any of these (see DECISION_LOG: HTTP-code-driven
-// detection). HTTP_500 covers 500-class 5xx (500/501/502/505+); 503/504 are
-// deliberately excluded as flag-for-review (HTTP_503_504 evidence) and never reach here.
+// detection). HTTP_500 covers 500-class 5xx (500/501/502/505+); HTTP_503_504 covers
+// 503/504 as flag-for-review — see DECISION_LOG 006.
 export const HARD_SIGNALS = {
   PAGEERROR: { score: 1.0, severity: 'high', tier: 'auto-assert' },
   HTTP_500: { score: 1.0, severity: 'critical', tier: 'auto-assert' },
+  HTTP_503_504: { score: 0.5, severity: 'low', tier: 'flag-for-review' },
   HTTP_4XX_NAV: { score: 0.8, severity: 'medium', tier: 'auto-assert' },
   ASSET_4XX: { score: 0.9, severity: 'medium', tier: 'auto-assert' },
   // local latency is dominated by environment noise; threshold crossings are not reproducible across machines.

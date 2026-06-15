@@ -42,8 +42,8 @@ export function pageEventsToHardSignals(events, targetOrigin = '') {
       evidence.push({ signal: 'PAGEERROR', detail: e.message });
     } else if (e.type === 'HTTP_5XX') {
       if (REVIEW_5XX.has(e.status)) {
-        // 503/504: credible but ambiguous — record for the deduction engine to
-        // review, never auto-assert a bug (cf. API_4XX).
+        // 503/504: credible but ambiguous — flag for review, never auto-assert (cf. API_4XX).
+        out.push('HTTP_503_504');
         evidence.push({ signal: 'HTTP_503_504', detail: `${e.status} ${e.url}` });
       } else {
         out.push('HTTP_500');
