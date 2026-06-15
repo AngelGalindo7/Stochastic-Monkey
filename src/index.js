@@ -15,7 +15,7 @@ import { scoreState } from './agent/expectations.js';
 import { checkDomFrozen, DOM_FROZEN_SETTLE_MS } from './agent/signals.js';
 import { initTelemetry, shutdownTelemetry, getTracer } from './observability/otel.js';
 import { Breadcrumbs } from './observability/breadcrumbs.js';
-import { writeBugReport } from './triage/triage.js';
+import { writeBugReport, writeFlaggedReport } from './triage/triage.js';
 import { runClick } from './actions/click.js';
 import { runInput } from './actions/input.js';
 import { runNavigate } from './actions/navigate.js';
@@ -86,10 +86,11 @@ function pickMacro(macros, rng) {
 }
 
 // Runs one crawl arm (authenticated or anon) to completion.
-// Returns { firstBug, fatalError }. Closes breadcrumbs; caller closes browser.
+// Returns { firstBug, firstFlagged, fatalError }. Closes breadcrumbs; caller closes browser.
 async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, stepsDir, targetOrigin }) {
   const engine = config.browser?.engine ?? 'playwright';
   let firstBug = null;
+  let firstFlagged = null;
   let fatalError = null;
 
   try {
@@ -367,6 +368,30 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           'bug.skipped',
           `skipped: page is at "${currentUrl}" (back-from-fresh artifact, not a real bug)`,
         );
+      } else if (surpriseResult.needsReview && !isNoiseLocation) {
+        const screenshotBuffer = await page.raw
+          .screenshot({ fullPage: true, type: 'png' })
+          .catch(() => null);
+        const domHtml = await page.raw.content().catch(() => '');
+        const flaggedResult = await writeFlaggedReport({
+          rootDir: PROJECT_ROOT,
+          bugRoot: config.triage?.flaggedRoot ?? 'FLAGGED',
+          seed,
+          severity: surpriseResult.severity,
+          signal: surpriseResult.signalType ?? surpriseResult.reason ?? 'unknown_signal',
+          reason: surpriseResult.reason ?? '',
+          pageUrl: currentUrl,
+          breadcrumbs: breadcrumbs.all(),
+          screenshotBuffer,
+          domHtml,
+          surpriseScore: surpriseResult.score,
+          evidence: hardEvidenceOuter,
+          tracePath: config.observability?.otel?.path,
+          stepsDirRel: path.relative(PROJECT_ROOT, stepsDir),
+          config,
+        });
+        if (!firstFlagged) firstFlagged = flaggedResult;
+        breadcrumbs.record('flag.write', `wrote ${flaggedResult.folderRel}`);
       }
     }
   } catch (err) {
@@ -390,11 +415,14 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
       fatalError = err;
     }
   } finally {
-    breadcrumbs.record('run.end', firstBug ? `bug: ${firstBug.folderRel}` : 'no bug found');
+    breadcrumbs.record(
+      'run.end',
+      firstBug ? `bug: ${firstBug.folderRel}` : firstFlagged ? `flagged: ${firstFlagged.folderRel}` : 'no bug found',
+    );
     await breadcrumbs.close();
   }
 
-  return { firstBug, fatalError };
+  return { firstBug, firstFlagged, fatalError };
 }
 
 async function main() {
@@ -428,6 +456,7 @@ async function main() {
   const declaredRoles = config.auth?.roles ? Object.keys(config.auth.roles) : ['user'];
 
   let combinedFirstBug = null;
+  let combinedFirstFlagged = null;
   let combinedFatalError = null;
 
   try {
@@ -462,7 +491,7 @@ async function main() {
       breadcrumbs.record('run.start', `run ${runId} arm=${role} seed=${seed} target=${config.target.url}`);
       console.log(`\n[run] arm=${role} seed=${seed}`);
 
-      const { firstBug, fatalError } = await runArm({
+      const { firstBug, firstFlagged, fatalError } = await runArm({
         role,
         page,
         seed,
@@ -475,6 +504,7 @@ async function main() {
       });
 
       if (firstBug && !combinedFirstBug) combinedFirstBug = firstBug;
+      if (firstFlagged && !combinedFirstFlagged) combinedFirstFlagged = firstFlagged;
       if (fatalError && !combinedFatalError) combinedFatalError = fatalError;
     }
   } finally {
@@ -492,6 +522,9 @@ async function main() {
   } else {
     console.log(`\nrun ${runId} completed without surfacing a bug.`);
     process.exitCode = 0;
+  }
+  if (combinedFirstFlagged) {
+    console.log(`FLAGGED: ${combinedFirstFlagged.folderRel}`);
   }
 }
 
