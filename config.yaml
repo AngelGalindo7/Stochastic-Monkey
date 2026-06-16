@@ -186,6 +186,16 @@ oracle:
     # Set true when the target uses soft-delete (logical delete, row stays in DB).
     # A 200 on GET after DELETE is then correct behaviour, not a bug.
     softDelete: false
+  # Anonymous read-replay (authz / Row-Level-Security smell). After the authenticated
+  # crawl, replays the reads the signed-in user made as an UNAUTHENTICATED client
+  # (drops the user bearer token, keeps the public apikey) and flags any owned record
+  # that still comes back — the Supabase RLS-off / OWASP API1 BOLA vector. Emits
+  # AUTHZ_UNCERTAIN (flag-for-review only); a human confirms the data is not public.
+  authzReplay:
+    enabled: true
+    maxReplays: 8           # replay at most N distinct owned reads per run (cost bound)
+    # Regex patterns for resources that are intentionally public — skipped.
+    publicAllowlist: []
 
 triage:
   bugRoot: BUG

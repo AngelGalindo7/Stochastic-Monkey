@@ -11,7 +11,7 @@ import { pageEventsToHardSignals } from './perception/httpSignals.js';
 import { clusterId } from './agent/stateAbstraction.js';
 import { candidateActions, sampleByPrior } from './agent/policy.js';
 import { MctsNode, descend, backprop } from './agent/mcts.js';
-import { scoreState } from './agent/expectations.js';
+import { scoreState, HARD_SIGNALS } from './agent/expectations.js';
 import { checkDomFrozen, DOM_FROZEN_SETTLE_MS } from './agent/signals.js';
 import { initTelemetry, shutdownTelemetry, getTracer } from './observability/otel.js';
 import { Breadcrumbs } from './observability/breadcrumbs.js';
@@ -25,7 +25,8 @@ import { runMacro } from './actions/macro.js';
 import { runUpload } from './actions/upload.js';
 import { checkCrossLayer } from './agent/oracles/crossLayer.js';
 import { checkBrokenImages } from './agent/oracles/structural.js';
-import { sharedJarClient } from './agent/apiClient.js';
+import { checkAuthzReplay } from './agent/oracles/authzReplay.js';
+import { sharedJarClient, isolatedClient } from './agent/apiClient.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname).replace(/^\//, ''), '..');
 
@@ -483,6 +484,7 @@ async function main() {
   let combinedFirstBug = null;
   let combinedFirstFlagged = null;
   let combinedFatalError = null;
+  let userCaptures = null;
 
   try {
     for (const role of declaredRoles) {
@@ -531,6 +533,45 @@ async function main() {
       if (firstBug && !combinedFirstBug) combinedFirstBug = firstBug;
       if (firstFlagged && !combinedFirstFlagged) combinedFirstFlagged = firstFlagged;
       if (fatalError && !combinedFatalError) combinedFatalError = fatalError;
+      if (role === 'user') userCaptures = page.captures ?? null;
+    }
+
+    // Anonymous read-replay (authz / RLS) check. Replays what the authenticated user
+    // read, as an unauthenticated client, and flags any owned record that comes back
+    // without the user token. Flag-for-review only; wrapped so it never crashes a run.
+    const azConfig = config.oracle?.authzReplay;
+    if (userCaptures?.length && azConfig?.enabled !== false) {
+      try {
+        const replay = await isolatedClient();
+        try {
+          const az = await checkAuthzReplay({
+            reads: userCaptures,
+            replay,
+            allowedDomains: config.target.allowedDomains,
+            config: azConfig,
+          });
+          if (az.signal) {
+            const flagged = await writeFlaggedReport({
+              rootDir: PROJECT_ROOT,
+              bugRoot: config.triage?.flaggedRoot ?? 'FLAGGED',
+              seed,
+              severity: HARD_SIGNALS[az.signal]?.severity ?? 'low',
+              signal: az.signal,
+              reason: az.reason ?? '',
+              pageUrl: config.target.url,
+              breadcrumbs: [],
+              evidence: [{ signal: az.signal, detail: az.detail }],
+              config,
+            });
+            if (!combinedFirstFlagged) combinedFirstFlagged = flagged;
+            console.log(`\nFLAGGED (authz): ${flagged.folderRel}`);
+          }
+        } finally {
+          await replay.close().catch(() => {});
+        }
+      } catch (err) {
+        console.error(`[authz] replay check skipped: ${err.message}`);
+      }
     }
   } finally {
     await browser.close().catch(() => {});
