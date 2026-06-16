@@ -77,7 +77,6 @@ run:
   seed: 42                 # Same seed = same action sequence. Reproducible.
   maxSteps: 100            # Stops after N MCTS steps even if no bug found.
   humanDelayMs: 250        # Pause between actions (human-realistic timing).
-  thresholdMs: 3000        # Latency above this fires a PERF_BREACH hard signal.
   stopOnFirstBug: true     # Set false to keep hunting after the first bug.
 
 actions:

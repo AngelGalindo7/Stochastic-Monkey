@@ -39,3 +39,4 @@ observability:
 
 triage:
   bugRoot: tests/smoke/BUG
+  flaggedRoot: tests/smoke/BUG

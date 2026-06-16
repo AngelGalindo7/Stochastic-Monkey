@@ -1,7 +1,8 @@
-// Smoke-test runner for W6 (CONSOLE_ERROR + DOM_FROZEN).
+// Smoke-test runner for the flag-for-review signals (CONSOLE_ERROR + DOM_FROZEN).
 // Usage: node tests/smoke/run.mjs
-// Starts a local fixture server, runs the monkey against each fixture,
-// and asserts the expected hard signal appears in severity.json.
+// Starts a local fixture server, runs the monkey against each fixture, and asserts
+// the expected signal appears in severity.json. Both signals are flag-for-review, so
+// the smoke configs route flaggedRoot into tests/smoke/BUG where this runner looks.
 
 import http from 'node:http';
 import fs from 'node:fs';
