@@ -17,11 +17,32 @@ function isWord(seg) {
   return !isId(seg) && !isVersionOrPrefix(seg) && seg.length > 0;
 }
 
+// PostgREST filter format: ?<column>=eq.<value>  (e.g. ?id=eq.42)
+// Only id/uuid columns are safe to treat as the primary resource key.
+// Collection = last non-version path segment (e.g. /rest/v1/items → items).
+function extractFromPostgRESTParams(url) {
+  try {
+    const parsed = new URL(url);
+    const params = parsed.searchParams;
+    for (const key of ['id', 'uuid']) {
+      const val = params.get(key);
+      if (!val) continue;
+      const match = val.match(/^eq\.(.+)$/);
+      if (!match || !isId(match[1])) continue;
+      const segs = parsed.pathname.split('/').filter(Boolean).filter((s) => !isVersionOrPrefix(s));
+      const collection = segs[segs.length - 1];
+      if (!collection || !isWord(collection)) continue;
+      return { collection, id: match[1] };
+    }
+  } catch {}
+  return null;
+}
+
 /**
  * Extracts REST resource attribution from a URL.
  *
- * Walks path segments right-to-left finding <collection>/<id> pairs.
- * Returns the innermost (primary) pair and optionally one parent pair.
+ * Primary: walks path segments right-to-left for <collection>/<id> pairs.
+ * Fallback: parses PostgREST-style query params (?id=eq.42) when path yields nothing.
  * Returns null for non-resource paths (collections, static assets, meta endpoints).
  *
  * @param {string} url
@@ -64,7 +85,7 @@ export function extractResourceId(url) {
       i--;
     }
 
-    if (pairs.length === 0) return null;
+    if (pairs.length === 0) return extractFromPostgRESTParams(url);
 
     const result = { collection: pairs[0].collection, id: pairs[0].id };
     if (pairs.length >= 2) {

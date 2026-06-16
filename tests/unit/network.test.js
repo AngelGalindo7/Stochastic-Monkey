@@ -11,13 +11,14 @@ function makePage() {
   return { on: (ev, fn) => em.on(ev, fn), _emit: (ev, ...args) => em.emit(ev, ...args) };
 }
 
-function makeReq({ method = 'GET', url = 'http://app/api/items', resourceType = 'fetch', postData = null, response = null } = {}) {
+function makeReq({ method = 'GET', url = 'http://app/api/items', resourceType = 'fetch', postData = null, response = null, reqHeaders = {} } = {}) {
   return {
     method: () => method,
     url: () => url,
     resourceType: () => resourceType,
     postData: () => postData,
     response: async () => response,
+    headers: () => reqHeaders,
   };
 }
 
@@ -334,5 +335,78 @@ describe('attachPuppeteerCapture', () => {
     expect(captures).toHaveLength(1);
     expect(captures[0].responseBody).toBeNull();
     expect(cdp.send).toHaveBeenCalledTimes(1); // only Network.enable
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auth header capture (Supabase / PostgREST compat)
+// ---------------------------------------------------------------------------
+
+describe('attachPlaywrightCapture — requestHeaders', () => {
+  it('captures apikey + authorization, drops irrelevant headers', async () => {
+    const page = makePage();
+    const captures = attachPlaywrightCapture(page);
+    const res = makeRes({ status: 204, headers: {} });
+    const req = makeReq({
+      method: 'DELETE',
+      url: 'https://abc.supabase.co/rest/v1/items?id=eq.42',
+      response: res,
+      reqHeaders: {
+        'apikey': 'anon-key-xyz',
+        'authorization': 'Bearer jwt123',
+        'content-type': 'application/json',
+        'accept-encoding': 'gzip',
+      },
+    });
+    page._emit('requestfinished', req);
+    await new Promise((r) => setImmediate(r));
+    expect(captures[0].requestHeaders).toEqual({ apikey: 'anon-key-xyz', authorization: 'Bearer jwt123' });
+  });
+
+  it('sets requestHeaders to null when no auth headers present', async () => {
+    const page = makePage();
+    const captures = attachPlaywrightCapture(page);
+    const res = makeRes({ status: 200, headers: { 'content-type': 'application/json' }, bodyStr: '{"id":1}' });
+    const req = makeReq({ method: 'GET', url: 'http://localhost:8000/api/items/1', response: res, reqHeaders: { 'accept': '*/*' } });
+    page._emit('requestfinished', req);
+    await new Promise((r) => setImmediate(r));
+    expect(captures[0].requestHeaders).toBeNull();
+  });
+
+  it('lowercases header keys (case-insensitive match)', async () => {
+    const page = makePage();
+    const captures = attachPlaywrightCapture(page);
+    const res = makeRes({ status: 200 });
+    const req = makeReq({ method: 'GET', url: 'http://app/api/items/1', response: res, reqHeaders: { 'Authorization': 'Bearer tok', 'X-API-Key': 'key1' } });
+    page._emit('requestfinished', req);
+    await new Promise((r) => setImmediate(r));
+    expect(captures[0].requestHeaders).toEqual({ authorization: 'Bearer tok', 'x-api-key': 'key1' });
+  });
+});
+
+describe('attachPuppeteerCapture — requestHeaders', () => {
+  it('captures apikey from CDP Network.requestWillBeSent headers', async () => {
+    const cdp = makeCdpClient();
+    cdp.send.mockResolvedValue({ body: '{}', base64Encoded: false });
+    const captures = await attachPuppeteerCapture(cdp);
+
+    cdp._emit('Network.requestWillBeSent', {
+      requestId: 'rh1',
+      request: {
+        method: 'DELETE',
+        url: 'https://abc.supabase.co/rest/v1/items?id=eq.7',
+        postData: null,
+        headers: { 'apikey': 'anon-key', 'cookie': 'session=abc' },
+      },
+      type: 'Fetch',
+    });
+    cdp._emit('Network.responseReceived', {
+      requestId: 'rh1',
+      response: { status: 204, headers: {} },
+    });
+    cdp._emit('Network.loadingFinished', { requestId: 'rh1' });
+
+    await flush();
+    expect(captures[0].requestHeaders).toEqual({ apikey: 'anon-key' });
   });
 });

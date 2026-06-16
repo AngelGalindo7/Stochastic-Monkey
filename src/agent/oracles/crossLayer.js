@@ -89,24 +89,55 @@ function urlEndsWithResourceId(cleanUrl, resourceId) {
   return lastSeg === String(resourceId.id);
 }
 
+// PostgREST-style resource check: ?id=eq.<value> or ?uuid=eq.<value>.
+// When true, the full URL (with query string) is the correct verify URL — stripping
+// it would produce a collection endpoint, not a resource endpoint.
+function isPostgRESTResourceUrl(url, resourceId) {
+  try {
+    const params = new URL(url).searchParams;
+    for (const key of ['id', 'uuid']) {
+      const val = params.get(key);
+      if (!val) continue;
+      const match = val.match(/^eq\.(.+)$/);
+      if (match && match[1] === String(resourceId.id)) return true;
+    }
+  } catch {}
+  return false;
+}
+
 // Resolve the URL to GET for verification and the check mode.
 //   DELETE / PUT / PATCH: resource ID is in the request URL (W3 already parsed it).
 //   POST to collection:   resource ID comes from the response body.
 //   POST to resource URL: upsert pattern — ID is in the URL.
+//
+// Two URL shapes are supported:
+//   Path-based    /api/items/42            → verifyUrl strips query string
+//   PostgREST     /rest/v1/items?id=eq.42  → verifyUrl keeps the query filter
 function resolveVerify(capture) {
   const { method, url, resource_id, responseBody } = capture;
   const cleanUrl = url.split('?')[0].replace(/\/+$/, '');
+  const fullUrl  = url.replace(/#.*$/, '').replace(/\/+$/, '');
 
   if (method === 'DELETE' || method === 'PUT' || method === 'PATCH') {
     if (!resource_id) return null; // can't attribute without an ID in the URL
-    if (!urlEndsWithResourceId(cleanUrl, resource_id)) return null; // action endpoint
-    return { verifyUrl: cleanUrl, mode: method === 'DELETE' ? 'delete' : 'persist' };
+    if (urlEndsWithResourceId(cleanUrl, resource_id)) {
+      return { verifyUrl: cleanUrl, mode: method === 'DELETE' ? 'delete' : 'persist' };
+    }
+    if (isPostgRESTResourceUrl(fullUrl, resource_id)) {
+      return { verifyUrl: fullUrl, mode: method === 'DELETE' ? 'delete' : 'persist' };
+    }
+    return null; // action endpoint or unrecognized URL shape
   }
 
   if (method === 'POST') {
     if (resource_id) {
-      if (!urlEndsWithResourceId(cleanUrl, resource_id)) return null; // action endpoint
-      return { verifyUrl: cleanUrl, mode: 'persist' };
+      if (urlEndsWithResourceId(cleanUrl, resource_id)) {
+        return { verifyUrl: cleanUrl, mode: 'persist' };
+      }
+      if (isPostgRESTResourceUrl(fullUrl, resource_id)) {
+        return { verifyUrl: fullUrl, mode: 'persist' };
+      }
+      return null; // action endpoint
     }
     const createdId = tryExtractCreatedId(responseBody);
     if (!createdId) return null;
@@ -118,13 +149,15 @@ function resolveVerify(capture) {
 
 // Poll until predicate(response) is true or attempts are exhausted.
 // Early exit on predicate satisfaction — avoids unnecessary retries on fast backends.
+// fetchOptions is forwarded to client.fetch on every attempt — carries auth headers
+// captured from the original mutation (e.g. Supabase apikey + Authorization).
 // Returns { satisfied: boolean, last: {status, body} | null }.
-async function pollUntil(client, url, predicate, { maxAttempts, delayMs }) {
+async function pollUntil(client, url, predicate, { maxAttempts, delayMs, fetchOptions = {} }) {
   let last = null;
   for (let i = 0; i < maxAttempts; i++) {
     if (i > 0) await new Promise((r) => setTimeout(r, delayMs));
     try {
-      last = await client.fetch(url);
+      last = await client.fetch(url, fetchOptions);
       if (predicate(last)) return { satisfied: true, last };
     } catch { /* network error — don't count as predicate failure, retry */ }
   }
@@ -160,12 +193,15 @@ export async function checkCrossLayer({ captures, client, allowedDomains = [], c
 
   const goneSet = new Set(goneStatuses);
   const { verifyUrl, mode } = verify;
+  // Forward auth headers captured from the original mutation (e.g. Supabase apikey +
+  // Authorization). Falls back to cookie-jar-only when no headers were captured.
+  const fetchOptions = mutation.requestHeaders ? { headers: mutation.requestHeaders } : {};
 
   if (mode === 'delete') {
     if (softDelete) return { signal: null };
     const { satisfied, last } = await pollUntil(
       client, verifyUrl, (r) => goneSet.has(r.status),
-      { maxAttempts: pollAttempts, delayMs: pollDelayMs },
+      { maxAttempts: pollAttempts, delayMs: pollDelayMs, fetchOptions },
     );
     if (satisfied || !last) return { signal: null };
     return {
@@ -177,7 +213,7 @@ export async function checkCrossLayer({ captures, client, allowedDomains = [], c
   // mode === 'persist' (POST / PUT / PATCH)
   const { satisfied, last } = await pollUntil(
     client, verifyUrl, (r) => !goneSet.has(r.status),
-    { maxAttempts: pollAttempts, delayMs: pollDelayMs },
+    { maxAttempts: pollAttempts, delayMs: pollDelayMs, fetchOptions },
   );
   if (satisfied || !last) return { signal: null };
   return {
