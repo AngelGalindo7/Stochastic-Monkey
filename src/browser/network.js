@@ -2,6 +2,20 @@ import { extractResourceId } from '../perception/resourceId.js';
 
 const BODY_SIZE_LIMIT = 64 * 1024; // 64 KB — guards against OOM on large API responses
 
+// Auth-relevant headers forwarded to oracle out-of-band reads.
+// Supabase requires apikey + Authorization; other APIs use x-api-key / x-auth-token.
+// All other headers are dropped — no leaking cookies, CSRF tokens, or tracing IDs.
+const AUTH_HEADER_KEYS = new Set(['apikey', 'authorization', 'x-api-key', 'x-auth-token']);
+
+function pickAuthHeaders(headers) {
+  if (!headers || typeof headers !== 'object') return null;
+  const out = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (AUTH_HEADER_KEYS.has(k.toLowerCase())) out[k.toLowerCase()] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 // Pure media/style asset types that will never carry JSON bodies.
 // Skipping them keeps the captures array lean for downstream oracles (B2, B6).
 const SKIP_RESOURCE_TYPES = new Set([
@@ -96,7 +110,8 @@ export function attachPlaywrightCapture(page, { bodySizeLimit = BODY_SIZE_LIMIT 
         } catch {}
       }
 
-      captures.push({ method, url, resourceType, status, requestBody, responseBody, resource_id: extractResourceId(url) });
+      const requestHeaders = pickAuthHeaders(req.headers());
+      captures.push({ method, url, resourceType, status, requestBody, responseBody, resource_id: extractResourceId(url), requestHeaders });
     } catch {} // capture errors must never affect the crawl
   });
 
@@ -124,6 +139,7 @@ export async function attachPuppeteerCapture(cdpClient, { bodySizeLimit = BODY_S
       url: request.url,
       resourceType: (type ?? 'Other').toLowerCase(),
       postData: request.postData ?? null,
+      requestHeaders: pickAuthHeaders(request.headers),
       status: -1,
       contentType: '',
     });
@@ -152,6 +168,7 @@ export async function attachPuppeteerCapture(cdpClient, { bodySizeLimit = BODY_S
       status: info.status,
       requestBody: tryParseJson(info.postData),
       resource_id: extractResourceId(info.url),
+      requestHeaders: info.requestHeaders,
     };
 
     if (!isJsonContentType(info.contentType)) {
