@@ -24,6 +24,7 @@ import { runBack, runForward, runRefresh } from './actions/history.js';
 import { runMacro } from './actions/macro.js';
 import { runUpload } from './actions/upload.js';
 import { checkCrossLayer } from './agent/oracles/crossLayer.js';
+import { checkBrokenImages } from './agent/oracles/structural.js';
 import { sharedJarClient } from './agent/apiClient.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname).replace(/^\//, ''), '..');
@@ -323,6 +324,12 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           if (clResult.signal) {
             hardSignals.push(clResult.signal);
             hardEvidence.push({ signal: clResult.signal, detail: clResult.detail });
+          }
+
+          const brResult = await checkBrokenImages(page, targetOrigin);
+          if (brResult.signal) {
+            hardSignals.push(brResult.signal);
+            hardEvidence.push({ signal: brResult.signal, detail: brResult.detail });
           }
 
           surpriseResult = scoreState({

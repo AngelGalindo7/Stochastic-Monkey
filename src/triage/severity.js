@@ -9,6 +9,7 @@ export const SIGNAL_SEVERITY = {
   DOM_FROZEN: 'medium',
   STATE_NOT_DELETED: 'critical',
   STATE_NOT_PERSISTED: 'critical',
+  BROKEN_IMAGE: 'low',
 };
 
 const RANK = { critical: 4, high: 3, medium: 2, low: 1 };
