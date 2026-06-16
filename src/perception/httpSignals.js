@@ -17,6 +17,42 @@ export function isNoiseUrl(url) {
   return NOISE_PATTERNS.some((re) => re.test(url));
 }
 
+// Network failure reasons that are routine cancellation/blocking, not an app defect.
+// SPA navigation aborts in-flight fetches (React Query / SWR / AbortController →
+// ERR_ABORTED); ad-blockers and admin policy cancel beacons (ERR_BLOCKED_BY_*);
+// transient connectivity resets the socket. A REQUEST_FAILED carrying one of these
+// is recorded as evidence only — never auto-asserted as a broken-resource bug.
+const BENIGN_FAILURE_REASONS = [
+  'ERR_ABORTED',
+  'ERR_BLOCKED_BY_CLIENT',
+  'ERR_BLOCKED_BY_ADMINISTRATOR',
+  'ERR_BLOCKED_BY_RESPONSE',
+  'ERR_NETWORK_CHANGED',
+  'ERR_INTERNET_DISCONNECTED',
+  'ERR_CONNECTION_RESET',
+  'ERR_CONNECTION_ABORTED',
+];
+
+export function isBenignFailure(reason) {
+  if (!reason) return false; // unknown reason — treat as a real failure (conservative)
+  return BENIGN_FAILURE_REASONS.some((r) => reason.includes(r));
+}
+
+// Uncaught exceptions that originate outside the app under test (browser extensions)
+// or are benign browser-internal throws (ResizeObserver loop notifications). The
+// PAGEERROR channel has no origin filter (unlike CONSOLE_ERROR), so screen these out
+// before auto-asserting a critical bug against the app.
+const PAGEERROR_NOISE = [
+  /chrome-extension:\/\//,
+  /moz-extension:\/\//,
+  /ResizeObserver loop/,
+];
+
+export function isPageErrorNoise(event) {
+  const haystack = `${event?.message ?? ''}\n${event?.stack ?? ''}`;
+  return PAGEERROR_NOISE.some((re) => re.test(haystack));
+}
+
 // Static sub-resources whose 4xx is a broken-asset bug (missing image, dead
 // stylesheet). Distinguished from API (xhr/fetch) 4xx, which is usually correct
 // rejection of bad input and must NOT auto-fire a bug.
@@ -38,8 +74,12 @@ export function pageEventsToHardSignals(events, targetOrigin = '') {
   const evidence = [];
   for (const e of events) {
     if (e.type === 'PAGEERROR') {
-      out.push('PAGEERROR');
-      evidence.push({ signal: 'PAGEERROR', detail: e.message });
+      if (isPageErrorNoise(e)) {
+        evidence.push({ signal: 'PAGEERROR_NOISE', detail: e.message });
+      } else {
+        out.push('PAGEERROR');
+        evidence.push({ signal: 'PAGEERROR', detail: e.message });
+      }
     } else if (e.type === 'HTTP_5XX') {
       if (REVIEW_5XX.has(e.status)) {
         // 503/504: credible but ambiguous — flag for review, never auto-assert (cf. API_4XX).
@@ -61,8 +101,12 @@ export function pageEventsToHardSignals(events, targetOrigin = '') {
         evidence.push({ signal: 'API_4XX', detail: `${e.status} ${e.url}` });
       }
     } else if (e.type === 'REQUEST_FAILED' && !isNoiseUrl(e.url)) {
-      out.push('ASSET_4XX');
-      evidence.push({ signal: 'REQUEST_FAILED', detail: `fail ${e.url}` });
+      if (isBenignFailure(e.reason)) {
+        evidence.push({ signal: 'REQUEST_FAILED_BENIGN', detail: `${e.reason} ${e.url}` });
+      } else {
+        out.push('ASSET_4XX');
+        evidence.push({ signal: 'REQUEST_FAILED', detail: `fail ${e.url}` });
+      }
     } else if (e.type === 'CONSOLE_ERROR') {
       const msg = e.message ?? '';
       if (!CONSOLE_ERROR_DENYLIST.some((re) => re.test(msg)) && isFirstPartyConsoleError(e, targetOrigin)) {
