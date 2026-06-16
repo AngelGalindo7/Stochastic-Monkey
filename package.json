@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "audit:config": "node src/index.js --audit-config",
-    "smoke": "node tests/smoke/run.mjs"
+    "smoke": "node tests/smoke/run.mjs",
+    "smoke:forms": "node tests/smoke/formfill.mjs"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
