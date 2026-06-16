@@ -12,15 +12,30 @@
 //      via <img> without explicit width/height attributes.
 //   3. Skip lazy images whose bounding rect is below the viewport — the browser
 //      hasn't started the decode yet so naturalWidth is always 0.
-//   4. First-party origin gate — third-party images that fail are out of scope.
+//   4. First-party gate — third-party images that fail are out of scope. Uses the
+//      same hostname-suffix matching as crossLayer/navigate (allowedDomains) so a
+//      first-party image served from a sibling host or port still counts: e.g. a
+//      UI on localhost:3000 with images on localhost:8000/static, or a Lovable app
+//      whose product images come from <project>.supabase.co. Falls back to exact
+//      origin equality when allowedDomains is empty — unlike crossLayer, an empty
+//      list does NOT mean allow-all here, or every failed third-party image would fire.
 //
 // Scored at 0.35 / flag-for-review because onerror placeholder-swap (the dominant
 // production failure mode) replaces the src before complete fires, bypassing this
 // check. The signal is credible but not unambiguous.
 
-export async function checkBrokenImages(page, targetOrigin) {
+export async function checkBrokenImages(page, targetOrigin, allowedDomains = []) {
   try {
-    const broken = await page.raw.evaluate((origin) => {
+    const broken = await page.raw.evaluate(({ origin, domains }) => {
+      const isFirstParty = (src) => {
+        try {
+          const url = new URL(src);
+          if (domains.length === 0) return url.origin === origin;
+          return domains.some((d) => url.hostname === d || url.hostname.endsWith(`.${d}`));
+        } catch {
+          return false;
+        }
+      };
       return Array.from(document.querySelectorAll('img'))
         .filter((el) => {
           if (!el.src || el.src === document.baseURI) return false;
@@ -31,14 +46,10 @@ export async function checkBrokenImages(page, targetOrigin) {
             if (rect.top > window.innerHeight) return false;
           }
           if (!el.complete || el.naturalWidth !== 0 || el.naturalHeight !== 0) return false;
-          try {
-            return new URL(el.src).origin === origin;
-          } catch {
-            return false;
-          }
+          return isFirstParty(el.src);
         })
         .map((el) => el.src);
-    }, targetOrigin);
+    }, { origin: targetOrigin, domains: allowedDomains ?? [] });
 
     if (!broken.length) return { signal: null };
     return {

@@ -326,7 +326,7 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
             hardEvidence.push({ signal: clResult.signal, detail: clResult.detail });
           }
 
-          const brResult = await checkBrokenImages(page, targetOrigin);
+          const brResult = await checkBrokenImages(page, targetOrigin, config.target.allowedDomains);
           if (brResult.signal) {
             hardSignals.push(brResult.signal);
             hardEvidence.push({ signal: brResult.signal, detail: brResult.detail });
