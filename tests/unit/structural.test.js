@@ -41,10 +41,22 @@ describe('checkBrokenImages', () => {
     expect(await checkBrokenImages(page, ORIGIN)).toEqual({ signal: null });
   });
 
-  it('passes targetOrigin as the second argument to evaluate', async () => {
+  it('passes origin and allowedDomains as the evaluate argument', async () => {
+    const page = makePage([]);
+    await checkBrokenImages(page, ORIGIN, ['example.com']);
+    expect(page.raw.evaluate).toHaveBeenCalledWith(expect.any(Function), {
+      origin: ORIGIN,
+      domains: ['example.com'],
+    });
+  });
+
+  it('defaults domains to an empty array when allowedDomains is omitted', async () => {
     const page = makePage([]);
     await checkBrokenImages(page, ORIGIN);
-    expect(page.raw.evaluate).toHaveBeenCalledWith(expect.any(Function), ORIGIN);
+    expect(page.raw.evaluate).toHaveBeenCalledWith(expect.any(Function), {
+      origin: ORIGIN,
+      domains: [],
+    });
   });
 });
 
@@ -69,7 +81,7 @@ function makeImg({ src = '', loading = 'auto', complete = true, naturalWidth = 0
 
 // Re-implement the filter predicate from structural.js so we can unit-test it
 // without a browser. Must stay in sync with the evaluate() callback in structural.js.
-function isFilteredOut(el, origin, innerHeight = 768) {
+function isFilteredOut(el, origin, allowedDomains = [], innerHeight = 768) {
   if (!el.src || el.src === 'about:blank') return true; // treated as baseURI for test
   const src = el.currentSrc || el.src;
   if (/\.svg($|\?)/i.test(src) || src.startsWith('data:image/svg')) return true;
@@ -79,7 +91,9 @@ function isFilteredOut(el, origin, innerHeight = 768) {
   }
   if (!el.complete || el.naturalWidth !== 0 || el.naturalHeight !== 0) return true;
   try {
-    return new URL(el.src).origin !== origin;
+    const url = new URL(el.src);
+    if (allowedDomains.length === 0) return url.origin !== origin;
+    return !allowedDomains.some((d) => url.hostname === d || url.hostname.endsWith(`.${d}`));
   } catch {
     return true;
   }
@@ -113,12 +127,12 @@ describe('checkBrokenImages — guard logic', () => {
 
   it('filters out lazy image below viewport', () => {
     const el = makeImg({ src: `${ORIGIN}/lazy.jpg`, loading: 'lazy', top: 900, complete: true, naturalWidth: 0, naturalHeight: 0 });
-    expect(isFilteredOut(el, ORIGIN, 768)).toBe(true);
+    expect(isFilteredOut(el, ORIGIN, [], 768)).toBe(true);
   });
 
   it('keeps lazy image that is in viewport', () => {
     const el = makeImg({ src: `${ORIGIN}/lazy.jpg`, loading: 'lazy', top: 100, complete: true, naturalWidth: 0, naturalHeight: 0 });
-    expect(isFilteredOut(el, ORIGIN, 768)).toBe(false);
+    expect(isFilteredOut(el, ORIGIN, [], 768)).toBe(false);
   });
 
   it('filters out an image that has not completed loading', () => {
@@ -139,5 +153,20 @@ describe('checkBrokenImages — guard logic', () => {
   it('filters out a malformed src URL', () => {
     const el = makeImg({ src: 'not-a-url', complete: true, naturalWidth: 0, naturalHeight: 0 });
     expect(isFilteredOut(el, ORIGIN)).toBe(true);
+  });
+
+  it('keeps a broken image on a sibling port when its host is in allowedDomains', () => {
+    const el = makeImg({ src: 'http://localhost:8000/static/p.jpg', complete: true, naturalWidth: 0, naturalHeight: 0 });
+    expect(isFilteredOut(el, 'http://localhost:3000', ['localhost'])).toBe(false);
+  });
+
+  it('keeps a broken Supabase-hosted image when supabase.co is in allowedDomains', () => {
+    const el = makeImg({ src: 'https://abc.supabase.co/storage/v1/object/public/x.jpg', complete: true, naturalWidth: 0, naturalHeight: 0 });
+    expect(isFilteredOut(el, 'https://app.lovable.app', ['lovable.app', 'supabase.co'])).toBe(false);
+  });
+
+  it('still filters a genuinely third-party host not in allowedDomains', () => {
+    const el = makeImg({ src: 'https://cdn.third-party.com/img.jpg', complete: true, naturalWidth: 0, naturalHeight: 0 });
+    expect(isFilteredOut(el, ORIGIN, ['example.com'])).toBe(true);
   });
 });
