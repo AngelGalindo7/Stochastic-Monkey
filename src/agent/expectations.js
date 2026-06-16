@@ -27,6 +27,9 @@ export const HARD_SIGNALS = {
   // first-party but app-intentional patterns (error boundaries, fetch guards) are indistinguishable from crashes.
   CONSOLE_ERROR: { score: 0.7, severity: 'medium', tier: 'flag-for-review' },
   DOM_FROZEN: { score: 0.85, severity: 'medium', tier: 'auto-assert' },
+  // Image with HTTP 200 but naturalWidth === 0 after decode — the silent gap ASSET_4XX misses.
+  // Scored low because onerror placeholder-swap bypasses detection in most production apps.
+  BROKEN_IMAGE: { score: 0.35, severity: 'low', tier: 'flag-for-review' },
 
   // B2 cross-layer persisted-state verdicts, emitted by crossLayer.js after
   // a committed mutation (2xx, not 202). Auto-assert because the oracle only fires
