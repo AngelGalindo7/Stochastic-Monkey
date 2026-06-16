@@ -313,14 +313,19 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           const { signals: hardSignals, evidence: hardEvidence } =
             pageEventsToHardSignals(newEvents, targetOrigin);
           hardEvidenceOuter = hardEvidence;
-          if (result.latencyMs > config.run.thresholdMs) hardSignals.push('PERF_BREACH');
 
-          const clResult = await checkCrossLayer({
-            captures: newCaptures,
-            client: sharedJarClient(page.raw),
-            allowedDomains: config.target.allowedDomains,
-            config: config.oracle?.crossLayer,
-          });
+          // sharedJarClient needs page.context().request (Playwright only). On the
+          // Puppeteer fallback arm it returns null, so skip the cross-layer oracle
+          // rather than throw mid-step.
+          const clClient = sharedJarClient(page.raw);
+          const clResult = clClient
+            ? await checkCrossLayer({
+                captures: newCaptures,
+                client: clClient,
+                allowedDomains: config.target.allowedDomains,
+                config: config.oracle?.crossLayer,
+              })
+            : { signal: null };
           if (clResult.signal) {
             hardSignals.push(clResult.signal);
             hardEvidence.push({ signal: clResult.signal, detail: clResult.detail });

@@ -14,8 +14,12 @@ async function parseResponse(apiResponse) {
   return { status, body };
 }
 
+// Playwright-only: page.context().request shares the live session cookie jar. On the
+// Puppeteer fallback arm there is no context().request, so return null and let the
+// caller skip the cross-layer oracle rather than throw mid-step.
 export function sharedJarClient(page) {
-  const ctx = page.context().request;
+  const ctx = page?.context?.()?.request;
+  if (!ctx) return null;
 
   return {
     async fetch(url, options = {}) {
