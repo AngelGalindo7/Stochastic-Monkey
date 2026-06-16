@@ -11,12 +11,16 @@ import { detectFillableForms, describeForm, applyFormValues } from '../../src/pe
 import { planFormValues } from '../../src/actions/formPlan.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const fixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'signup-form.html'));
+const fixtures = {
+  '/signup': fs.readFileSync(path.join(__dirname, 'fixtures', 'signup-form.html')),
+  '/two-forms': fs.readFileSync(path.join(__dirname, 'fixtures', 'two-forms.html')),
+};
 const PORT = 3098;
 
 const server = http.createServer((req, res) => {
+  const body = fixtures[req.url.split('?')[0]] || fixtures['/signup'];
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(fixture);
+  res.end(body);
 });
 await new Promise((r) => server.listen(PORT, r));
 
@@ -29,7 +33,7 @@ const assert = (cond, msg) => {
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
 try {
   const page = await browser.newPage();
-  await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'load' });
+  await page.goto(`http://localhost:${PORT}/signup`, { waitUntil: 'load' });
 
   const forms = await detectFillableForms(page);
   assert(forms.length === 1, `detected exactly one fillable form (got ${forms.length})`);
@@ -53,6 +57,27 @@ try {
   assert(sub?.country === 'us', `country selected a real option (${sub?.country})`);
   assert(Number(sub?.age) >= 18 && Number(sub?.age) <= 120, `age within min/max (${sub?.age})`);
   assert(sub?.__tosChecked === true, 'required terms checkbox checked');
+
+  // B1 regression: tags from one FORM_FILL must not derail the next form on the page.
+  await page.goto(`http://localhost:${PORT}/two-forms`, { waitUntil: 'load' });
+  const tf = await detectFillableForms(page);
+  assert(tf.length === 2, `two-forms: detected 2 forms (got ${tf.length})`);
+  {
+    // cycle 1 — only TAG the search form (index 0); do not fill it, so any value that
+    // later appears in it must have leaked from the signup cycle (a stale-tag bug).
+    await describeForm(page, 0);
+  }
+  await page.evaluate(() => { window.__signup = undefined; });
+  {
+    // cycle 2 — fill + submit the signup form (index 1); must NOT hit the search form
+    const { fields } = await describeForm(page, 1);
+    const { submitted } = await applyFormValues(page, planFormValues(fields, seedrandom('b')));
+    assert(submitted === true, 'two-forms: second cycle reported submitted');
+  }
+  const signup = await page.evaluate(() => window.__signup);
+  assert(/@example\.com$/.test(signup?.email || ''), `two-forms: signup submitted with valid email (got ${JSON.stringify(signup)})`);
+  const searchVal = await page.evaluate(() => document.querySelector('#search input[name="q"]').value);
+  assert(searchVal === '', `two-forms: search field not polluted by the signup fill (got "${searchVal}")`);
 } finally {
   await browser.close();
   server.close();

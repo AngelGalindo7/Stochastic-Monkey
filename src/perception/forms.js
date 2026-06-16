@@ -54,6 +54,13 @@ export async function detectFillableForms(rawPage) {
 export async function describeForm(rawPage, index = 0) {
   if (!rawPage || rawPage._isLightpanda) return { fields: [], hasSubmit: false };
   return rawPage.evaluate((idx) => {
+    // Clear tags left by a previous FORM_FILL so the document-wide [data-mfill] /
+    // [data-msubmit] lookups in applyFormValues can never resolve to a stale form
+    // (otherwise a later step could write into / submit an earlier form).
+    document.querySelectorAll('[data-mfill], [data-msubmit]').forEach((el) => {
+      el.removeAttribute('data-mfill');
+      el.removeAttribute('data-msubmit');
+    });
     const isVisible = (el) => {
       if (!el || el.disabled) return false;
       if (!el.getClientRects().length) return false;
