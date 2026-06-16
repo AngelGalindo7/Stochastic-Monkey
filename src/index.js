@@ -23,6 +23,8 @@ import { runScroll } from './actions/scroll.js';
 import { runBack, runForward, runRefresh } from './actions/history.js';
 import { runMacro } from './actions/macro.js';
 import { runUpload } from './actions/upload.js';
+import { checkCrossLayer } from './agent/oracles/crossLayer.js';
+import { sharedJarClient } from './agent/apiClient.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname).replace(/^\//, ''), '..');
 
@@ -311,6 +313,17 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
             pageEventsToHardSignals(newEvents, targetOrigin);
           hardEvidenceOuter = hardEvidence;
           if (result.latencyMs > config.run.thresholdMs) hardSignals.push('PERF_BREACH');
+
+          const clResult = await checkCrossLayer({
+            captures: newCaptures,
+            client: sharedJarClient(page.raw),
+            allowedDomains: config.target.allowedDomains,
+            config: config.oracle?.crossLayer,
+          });
+          if (clResult.signal) {
+            hardSignals.push(clResult.signal);
+            hardEvidence.push({ signal: clResult.signal, detail: clResult.detail });
+          }
 
           surpriseResult = scoreState({
             observed,

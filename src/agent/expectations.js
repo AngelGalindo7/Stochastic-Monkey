@@ -28,6 +28,13 @@ export const HARD_SIGNALS = {
   CONSOLE_ERROR: { score: 0.7, severity: 'medium', tier: 'flag-for-review' },
   DOM_FROZEN: { score: 0.85, severity: 'medium', tier: 'auto-assert' },
 
+  // B2 cross-layer persisted-state verdicts, emitted by crossLayer.js after
+  // a committed mutation (2xx, not 202). Auto-assert because the oracle only fires
+  // when the gone-set / existence check is unambiguous after N polling retries
+  // (adversarial report: "cross-layer differential where the contract is unambiguous").
+  STATE_NOT_DELETED: { score: 1.0, severity: 'critical', tier: 'auto-assert' },
+  STATE_NOT_PERSISTED: { score: 1.0, severity: 'critical', tier: 'auto-assert' },
+
   // Authorization-replay verdicts, emitted by the future replay oracle (the
   // recorder/replayer/orchestrator wiring lands separately). Split across the two
   // tiers because authz replay is heuristic: Autorize's own docs warn its

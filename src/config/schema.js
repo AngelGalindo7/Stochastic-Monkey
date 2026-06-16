@@ -164,5 +164,31 @@ export function validate(config) {
     }
   }
 
+  const cl = config.oracle?.crossLayer;
+  if (cl !== undefined) {
+    if (cl.enabled !== undefined && typeof cl.enabled !== 'boolean') {
+      throw new Error('config: oracle.crossLayer.enabled must be a boolean if provided');
+    }
+    if (cl.pollAttempts !== undefined && (typeof cl.pollAttempts !== 'number' || cl.pollAttempts < 1)) {
+      throw new Error('config: oracle.crossLayer.pollAttempts must be a positive number if provided');
+    }
+    if (cl.pollDelayMs !== undefined && (typeof cl.pollDelayMs !== 'number' || cl.pollDelayMs < 0)) {
+      throw new Error('config: oracle.crossLayer.pollDelayMs must be a non-negative number if provided');
+    }
+    if (cl.goneStatuses !== undefined) {
+      if (!Array.isArray(cl.goneStatuses) || cl.goneStatuses.length === 0) {
+        throw new Error('config: oracle.crossLayer.goneStatuses must be a non-empty array if provided');
+      }
+      for (const [i, s] of cl.goneStatuses.entries()) {
+        if (typeof s !== 'number' || s < 100 || s > 599) {
+          throw new Error(`config: oracle.crossLayer.goneStatuses[${i}] must be a valid HTTP status code`);
+        }
+      }
+    }
+    if (cl.softDelete !== undefined && typeof cl.softDelete !== 'boolean') {
+      throw new Error('config: oracle.crossLayer.softDelete must be a boolean if provided');
+    }
+  }
+
   return config;
 }
