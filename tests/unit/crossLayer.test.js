@@ -121,7 +121,7 @@ describe('checkCrossLayer — DELETE', () => {
       client,
       ...DEFAULTS,
     });
-    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/42');
+    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/42', {});
   });
 
   it('is silent when client.fetch throws (network error — no false positive)', async () => {
@@ -210,7 +210,7 @@ describe('checkCrossLayer — POST', () => {
     });
     expect(result.signal).toBe('STATE_NOT_PERSISTED');
     expect(result.detail).toMatch(/POST.*GET.*items\/99.*404/);
-    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/99');
+    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/99', {});
   });
 
   it('is silent when created resource is readable (201 + GET 200)', async () => {
@@ -294,7 +294,7 @@ describe('checkCrossLayer — POST', () => {
       client,
       ...DEFAULTS,
     });
-    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/5');
+    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/5', {});
   });
 
   it('uses URL resource_id when POST targets a specific resource (upsert)', async () => {
@@ -311,7 +311,7 @@ describe('checkCrossLayer — POST', () => {
       ...DEFAULTS,
     });
     expect(result.signal).toBe('STATE_NOT_PERSISTED');
-    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/42');
+    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/42', {});
   });
 });
 
@@ -435,7 +435,77 @@ describe('checkCrossLayer — action endpoint guard', () => {
       ...DEFAULTS,
     });
     expect(result.signal).toBe('STATE_NOT_DELETED');
-    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/42');
+    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/42', {});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Supabase / PostgREST compat — query-param resource IDs + auth header forwarding
+// ---------------------------------------------------------------------------
+
+describe('checkCrossLayer — PostgREST + auth headers', () => {
+  it('fires STATE_NOT_DELETED for Supabase DELETE (?id=eq.42) and forwards auth headers', async () => {
+    const client = makeClient([okGet()]);
+    const result = await checkCrossLayer({
+      captures: [makeCapture({
+        method: 'DELETE',
+        url: 'https://abc.supabase.co/rest/v1/items?id=eq.42',
+        status: 204,
+        resource_id: { collection: 'items', id: '42' },
+        requestHeaders: { apikey: 'anon-key', authorization: 'Bearer jwt123' },
+      })],
+      client,
+      allowedDomains: ['supabase.co'],
+      config: { pollAttempts: 1, pollDelayMs: 0 },
+    });
+    expect(result.signal).toBe('STATE_NOT_DELETED');
+    expect(client.fetch).toHaveBeenCalledWith(
+      'https://abc.supabase.co/rest/v1/items?id=eq.42',
+      { headers: { apikey: 'anon-key', authorization: 'Bearer jwt123' } },
+    );
+  });
+
+  it('falls back to empty fetchOptions when no auth headers captured', async () => {
+    const client = makeClient([gone404()]);
+    const result = await checkCrossLayer({
+      captures: [makeCapture({
+        method: 'DELETE',
+        url: 'https://abc.supabase.co/rest/v1/items?id=eq.42',
+        status: 204,
+        resource_id: { collection: 'items', id: '42' },
+        requestHeaders: null,
+      })],
+      client,
+      allowedDomains: ['supabase.co'],
+      config: { pollAttempts: 1, pollDelayMs: 0 },
+    });
+    expect(result.signal).toBeNull();
+    expect(client.fetch).toHaveBeenCalledWith(
+      'https://abc.supabase.co/rest/v1/items?id=eq.42',
+      {},
+    );
+  });
+
+  it('fires STATE_NOT_PERSISTED for Supabase POST collection with auth headers', async () => {
+    const client = makeClient([gone404()]);
+    const result = await checkCrossLayer({
+      captures: [makeCapture({
+        method: 'POST',
+        url: 'https://abc.supabase.co/rest/v1/items',
+        status: 201,
+        resource_id: null,
+        responseBody: { id: 99 },
+        requestHeaders: { apikey: 'anon-key', authorization: 'Bearer jwt123' },
+      })],
+      client,
+      allowedDomains: ['supabase.co'],
+      config: { pollAttempts: 1, pollDelayMs: 0 },
+    });
+    expect(result.signal).toBe('STATE_NOT_PERSISTED');
+    expect(client.fetch).toHaveBeenCalledWith(
+      'https://abc.supabase.co/rest/v1/items/99',
+      { headers: { apikey: 'anon-key', authorization: 'Bearer jwt123' } },
+    );
   });
 });
 
@@ -477,6 +547,6 @@ describe('checkCrossLayer — no mutation', () => {
       ...DEFAULTS,
     });
     expect(result.signal).toBeNull(); // 404 = gone on the last mutation
-    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/42');
+    expect(client.fetch).toHaveBeenCalledWith('http://localhost:8000/api/items/42', {});
   });
 });

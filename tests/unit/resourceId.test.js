@@ -113,6 +113,42 @@ describe('extractResourceId — returns null for non-resource paths', () => {
   });
 });
 
+describe('extractResourceId — PostgREST query-param fallback', () => {
+  it('DELETE /rest/v1/items?id=eq.42 → integer id', () => {
+    expect(extractResourceId('https://abc.supabase.co/rest/v1/items?id=eq.42'))
+      .toEqual({ collection: 'items', id: '42' });
+  });
+
+  it('PATCH /rest/v1/posts?id=eq.<uuid>', () => {
+    const uuid = '550e8400-e29b-41d4-a716-446655440000';
+    expect(extractResourceId(`https://abc.supabase.co/rest/v1/posts?id=eq.${uuid}`))
+      .toEqual({ collection: 'posts', id: uuid });
+  });
+
+  it('uuid column name: ?uuid=eq.<uuid>', () => {
+    const uuid = '550e8400-e29b-41d4-a716-446655440000';
+    expect(extractResourceId(`https://abc.supabase.co/rest/v1/items?uuid=eq.${uuid}`))
+      .toEqual({ collection: 'items', id: uuid });
+  });
+
+  it('ignores non-eq operators: ?id=gt.5 → null', () => {
+    expect(extractResourceId('https://abc.supabase.co/rest/v1/items?id=gt.5')).toBeNull();
+  });
+
+  it('ignores non-id columns: ?name=eq.foo → null', () => {
+    expect(extractResourceId('https://abc.supabase.co/rest/v1/items?name=eq.foo')).toBeNull();
+  });
+
+  it('path-based id still wins when present (no fallback triggered)', () => {
+    expect(extractResourceId('https://abc.supabase.co/rest/v1/items/42?select=*'))
+      .toEqual({ collection: 'items', id: '42' });
+  });
+
+  it('collection-only URL with select param stays null: /rest/v1/items?select=*', () => {
+    expect(extractResourceId('https://abc.supabase.co/rest/v1/items?select=*')).toBeNull();
+  });
+});
+
 describe('extractResourceId — malformed / edge inputs', () => {
   it('null does not throw, returns null', () => {
     expect(extractResourceId(null)).toBeNull();
