@@ -46,9 +46,9 @@ function numberInRange(f, rng) {
   if (min != null && max != null && max >= min) {
     const span = Math.floor((max - min) / step);
     base = min + (span > 0 ? int(rng, span + 1) * step : 0);
-  } else if (max != null && base > max) {
-    base = max;
   }
+  if (min != null && base < min) base = min;
+  if (max != null && base > max) base = max;
   return String(base);
 }
 
