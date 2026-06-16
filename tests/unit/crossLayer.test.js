@@ -444,8 +444,8 @@ describe('checkCrossLayer — action endpoint guard', () => {
 // ---------------------------------------------------------------------------
 
 describe('checkCrossLayer — PostgREST + auth headers', () => {
-  it('fires STATE_NOT_DELETED for Supabase DELETE (?id=eq.42) and forwards auth headers', async () => {
-    const client = makeClient([okGet()]);
+  it('fires STATE_NOT_DELETED for Supabase DELETE (?id=eq.42) when the row is still present', async () => {
+    const client = makeClient([{ status: 200, body: [{ id: 42 }] }]);
     const result = await checkCrossLayer({
       captures: [makeCapture({
         method: 'DELETE',
@@ -503,9 +503,79 @@ describe('checkCrossLayer — PostgREST + auth headers', () => {
     });
     expect(result.signal).toBe('STATE_NOT_PERSISTED');
     expect(client.fetch).toHaveBeenCalledWith(
-      'https://abc.supabase.co/rest/v1/items/99',
+      'https://abc.supabase.co/rest/v1/items?id=eq.99',
       { headers: { apikey: 'anon-key', authorization: 'Bearer jwt123' } },
     );
+  });
+
+  it('is silent for Supabase DELETE when the row is gone (200 + empty array)', async () => {
+    const client = makeClient([{ status: 200, body: [] }]);
+    const result = await checkCrossLayer({
+      captures: [makeCapture({
+        method: 'DELETE',
+        url: 'https://abc.supabase.co/rest/v1/items?id=eq.42',
+        status: 204,
+        resource_id: { collection: 'items', id: '42' },
+      })],
+      client,
+      allowedDomains: ['supabase.co'],
+      config: { pollAttempts: 1, pollDelayMs: 0 },
+    });
+    expect(result.signal).toBeNull();
+  });
+
+  it('builds a ?id=eq filter verify URL for a Supabase POST collection insert', async () => {
+    const client = makeClient([{ status: 200, body: [{ id: 99 }] }]);
+    const result = await checkCrossLayer({
+      captures: [makeCapture({
+        method: 'POST',
+        url: 'https://abc.supabase.co/rest/v1/items',
+        status: 201,
+        resource_id: null,
+        responseBody: { id: 99 },
+      })],
+      client,
+      allowedDomains: ['supabase.co'],
+      config: { pollAttempts: 1, pollDelayMs: 0 },
+    });
+    // 200 + non-empty array → row present → no bug
+    expect(result.signal).toBeNull();
+    expect(client.fetch).toHaveBeenCalledWith('https://abc.supabase.co/rest/v1/items?id=eq.99', {});
+  });
+
+  it('fires STATE_NOT_PERSISTED for a Supabase insert that reads back 200 + empty array', async () => {
+    const client = makeClient([{ status: 200, body: [] }]);
+    const result = await checkCrossLayer({
+      captures: [makeCapture({
+        method: 'POST',
+        url: 'https://abc.supabase.co/rest/v1/items',
+        status: 201,
+        resource_id: null,
+        responseBody: { id: 99 },
+      })],
+      client,
+      allowedDomains: ['supabase.co'],
+      config: { pollAttempts: 1, pollDelayMs: 0 },
+    });
+    expect(result.signal).toBe('STATE_NOT_PERSISTED');
+  });
+
+  it('extracts the id from a representation-array insert body ([{ id }])', async () => {
+    const client = makeClient([{ status: 200, body: [{ id: 7 }] }]);
+    const result = await checkCrossLayer({
+      captures: [makeCapture({
+        method: 'POST',
+        url: 'https://abc.supabase.co/rest/v1/items',
+        status: 201,
+        resource_id: null,
+        responseBody: [{ id: 7, name: 'Widget' }],
+      })],
+      client,
+      allowedDomains: ['supabase.co'],
+      config: { pollAttempts: 1, pollDelayMs: 0 },
+    });
+    expect(result.signal).toBeNull();
+    expect(client.fetch).toHaveBeenCalledWith('https://abc.supabase.co/rest/v1/items?id=eq.7', {});
   });
 });
 
