@@ -85,6 +85,10 @@ actions:
   # crucial for finding bugs that only appear after going back from a stale state.
   weights:
     CLICK: 0.40
+    # FORM_FILL fills every field of a form with type-appropriate VALID data and
+    # submits — this is what produces real backend writes for the STATE_*/authz
+    # oracles. INPUT stays for single-field adversarial probing (XSS/SQLi dataPool).
+    FORM_FILL: 0.25
     INPUT: 0.15
     UPLOAD: 0.10
     NAVIGATION: 0.10

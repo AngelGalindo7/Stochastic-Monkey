@@ -23,6 +23,8 @@ import { runScroll } from './actions/scroll.js';
 import { runBack, runForward, runRefresh } from './actions/history.js';
 import { runMacro } from './actions/macro.js';
 import { runUpload } from './actions/upload.js';
+import { runFormFill } from './actions/formFill.js';
+import { detectFillableForms } from './perception/forms.js';
 import { checkCrossLayer } from './agent/oracles/crossLayer.js';
 import { checkBrokenImages } from './agent/oracles/structural.js';
 import { checkAuthzReplay } from './agent/oracles/authzReplay.js';
@@ -73,6 +75,8 @@ async function executeAction({ action, page, config, rng, breadcrumbs }) {
         rng,
         projectRoot: PROJECT_ROOT,
       });
+    case 'FORM_FILL':
+      return runFormFill({ page, target: action.target, rng });
     default:
       return { success: false, error: `unknown action ${action.type}` };
   }
@@ -237,12 +241,14 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
       const a11y = await snapshotPage(page.raw);
       const preActionUrl = page.raw.url();
       const fileInputs = await getFileInputs(page.raw);
+      const forms = await detectFillableForms(page.raw);
       const stateId = clusterId(a11y, config.mcts.abstractionGranularity);
       recentStateIds.push(stateId);
       const cands = candidateActions(a11y, {
         weights: config.actions.weights,
         blockedSelectors: config.target.blockedSelectors,
         fileInputs,
+        forms,
       });
       if (cands.length === 0) {
         breadcrumbs.record('warn', 'no candidate actions; ending run');
