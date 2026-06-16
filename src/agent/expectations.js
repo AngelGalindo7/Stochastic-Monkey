@@ -20,13 +20,21 @@ export const HARD_SIGNALS = {
   PAGEERROR: { score: 1.0, severity: 'high', tier: 'auto-assert' },
   HTTP_500: { score: 1.0, severity: 'critical', tier: 'auto-assert' },
   HTTP_503_504: { score: 0.5, severity: 'low', tier: 'flag-for-review' },
-  HTTP_4XX_NAV: { score: 0.8, severity: 'medium', tier: 'auto-assert' },
+  // Demoted to flag-for-review (DECISION_LOG 013): SPA client-routing makes a
+  // server-side document 4xx near-blind, and the cases it does catch (framework route
+  // prefetch, intentional styled 404 pages) are often correct behaviour — too
+  // ambiguous to auto-assert.
+  HTTP_4XX_NAV: { score: 0.5, severity: 'medium', tier: 'flag-for-review' },
   ASSET_4XX: { score: 0.9, severity: 'medium', tier: 'auto-assert' },
-  // local latency is dominated by environment noise; threshold crossings are not reproducible across machines.
-  PERF_BREACH: { score: 0.6, severity: 'low', tier: 'flag-for-review' },
+  // PERF_BREACH decommissioned (DECISION_LOG 013): per-action wall-clock latency is
+  // environment noise, not reproducible across machines, and never indicated a real bug.
   // first-party but app-intentional patterns (error boundaries, fetch guards) are indistinguishable from crashes.
   CONSOLE_ERROR: { score: 0.7, severity: 'medium', tier: 'flag-for-review' },
-  DOM_FROZEN: { score: 0.85, severity: 'medium', tier: 'auto-assert' },
+  // Demoted to flag-for-review (DECISION_LOG 013): a fixed-delay empty-DOM check
+  // false-fires on slow SPA hydration and legitimately-empty states; a genuine
+  // crash-to-blank-screen is already auto-asserted via the co-firing PAGEERROR/
+  // CONSOLE_ERROR, so nothing real is lost by not auto-asserting the bare blank.
+  DOM_FROZEN: { score: 0.5, severity: 'medium', tier: 'flag-for-review' },
   // Image with HTTP 200 but naturalWidth === 0 after decode — the silent gap ASSET_4XX misses.
   // Scored low because onerror placeholder-swap bypasses detection in most production apps.
   BROKEN_IMAGE: { score: 0.35, severity: 'low', tier: 'flag-for-review' },

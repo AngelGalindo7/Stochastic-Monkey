@@ -23,7 +23,7 @@ describe('signal consistency: shared HARD_SIGNALS ↔ SIGNAL_SEVERITY keys', () 
     // HTTP_500 is intentionally absent: it is an oracle-only rename of the
     // 500-class 5xx (raw events stay HTTP_5XX), so it lives in
     // INTENTIONAL_ORACLE_ONLY, not the shared set. See the anchor below.
-    const required = ['PAGEERROR', 'ASSET_4XX', 'DOM_FROZEN', 'PERF_BREACH'];
+    const required = ['PAGEERROR', 'ASSET_4XX', 'DOM_FROZEN'];
     for (const sig of required) {
       expect(sharedSignals, `${sig} was removed from one of the two tables`).toContain(sig);
     }
@@ -64,11 +64,6 @@ describe('signal consistency: known-anchor pairs', () => {
   it('ASSET_4XX is medium in both modules', () => {
     expect(HARD_SIGNALS.ASSET_4XX.severity).toBe('medium');
     expect(SIGNAL_SEVERITY.ASSET_4XX).toBe('medium');
-  });
-
-  it('PERF_BREACH is low in both modules', () => {
-    expect(HARD_SIGNALS.PERF_BREACH.severity).toBe('low');
-    expect(SIGNAL_SEVERITY.PERF_BREACH).toBe('low');
   });
 
   it('HTTP_4XX_NAV is medium in HARD_SIGNALS (oracle-only — no SIGNAL_SEVERITY entry by design)', () => {

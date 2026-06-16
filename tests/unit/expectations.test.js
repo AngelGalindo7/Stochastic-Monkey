@@ -34,14 +34,22 @@ describe('expectations.scoreState — bug detection (hard signals)', () => {
   });
 
   it('picks the highest-score signal when several fire', () => {
-    const out = scoreState({ observed: tree(), hardSignals: ['ASSET_4XX', 'HTTP_500', 'PERF_BREACH'] });
+    const out = scoreState({ observed: tree(), hardSignals: ['ASSET_4XX', 'HTTP_500'] });
     expect(out.signalType).toBe('HTTP_500');
   });
 
-  it('treats HTTP_4XX_NAV as a bug', () => {
+  it('treats HTTP_4XX_NAV as flag-for-review (SPA routing makes it too ambiguous to auto-assert)', () => {
     const out = scoreState({ observed: tree(), hardSignals: ['HTTP_4XX_NAV'] });
-    expect(out.isBug).toBe(true);
-    expect(out.severity).toBe('medium');
+    expect(out.isBug).toBe(false);
+    expect(out.needsReview).toBe(true);
+    expect(out.tier).toBe('flag-for-review');
+  });
+
+  it('treats DOM_FROZEN as flag-for-review (timing-fragile; never auto-asserts)', () => {
+    const out = scoreState({ observed: tree(), hardSignals: ['DOM_FROZEN'] });
+    expect(out.isBug).toBe(false);
+    expect(out.needsReview).toBe(true);
+    expect(out.tier).toBe('flag-for-review');
   });
 });
 
