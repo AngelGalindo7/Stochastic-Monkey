@@ -76,20 +76,22 @@ function bodyOverlap(ownedIds, replayBody) {
   return false;
 }
 
-// Did the authed read carry a USER bearer token we can strip for the anon replay?
-// Cookie-auth reads don't expose the credential in the captured headers, so they are
-// out of scope for this passive oracle (a true anon arm's own 401s cover enforcement).
+// User session/bearer tokens stripped for the anon replay. `apikey` / `x-api-key` are
+// KEPT because for Supabase-style backends they are the PUBLIC project key (without
+// which PostgREST returns an infra 401 that masquerades as "enforced"). Assumption: an
+// API that puts a PER-USER secret in apikey/x-api-key is out of scope for this passive
+// oracle. Cookie-auth reads don't expose the credential in captured headers, so they
+// are also out of scope (a true anon arm's own 401s cover enforcement there).
+const USER_TOKEN_HEADERS = new Set(['authorization', 'x-auth-token']);
+
 function hasUserToken(headers) {
-  return !!headers && Object.keys(headers).some((k) => k.toLowerCase() === 'authorization');
+  return !!headers && Object.keys(headers).some((k) => USER_TOKEN_HEADERS.has(k.toLowerCase()));
 }
 
-// Drop the user's bearer token; keep everything else (notably Supabase's public
-// `apikey`, without which PostgREST returns an infra 401 that masquerades as "enforced").
-// This isolates exactly "is this row readable with only the public key?".
 function anonHeaders(headers) {
   const out = {};
   for (const [k, v] of Object.entries(headers ?? {})) {
-    if (k.toLowerCase() === 'authorization') continue;
+    if (USER_TOKEN_HEADERS.has(k.toLowerCase())) continue;
     out[k] = v;
   }
   return out;
