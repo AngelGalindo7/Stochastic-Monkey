@@ -167,3 +167,53 @@ describe('planFormValues — determinism', () => {
     expect(a).toEqual(b);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Sentinel injection
+// ---------------------------------------------------------------------------
+
+describe('planFormValues — sentinel injection', () => {
+  const SENTINEL = 'mhk-abc123def456';
+
+  it('appends the sentinel to the first free-text fill', () => {
+    const fields = [field({ index: 0, name: 'notes' })];
+    const [item] = planFormValues(fields, seedrandom('s'), SENTINEL);
+    expect(item.value).toContain(SENTINEL);
+  });
+
+  it('skips structured fields (email, password) for sentinel injection', () => {
+    const fields = [
+      field({ index: 0, type: 'email', name: 'email' }),
+      field({ index: 1, type: 'password', name: 'password' }),
+      field({ index: 2, name: 'notes' }),
+    ];
+    const plan = planFormValues(fields, seedrandom('s'), SENTINEL);
+    expect(plan[0].value).not.toContain(SENTINEL); // email — structured
+    expect(plan[1].value).not.toContain(SENTINEL); // password — structured
+    expect(plan[2].value).toContain(SENTINEL);     // notes — first free-text
+  });
+
+  it('injects into exactly one field (not all free-text fields)', () => {
+    const fields = [
+      field({ index: 0, name: 'notes' }),
+      field({ index: 1, name: 'bio' }),
+    ];
+    const plan = planFormValues(fields, seedrandom('s'), SENTINEL);
+    const injected = plan.filter((i) => i.value.includes(SENTINEL));
+    expect(injected.length).toBe(1);
+  });
+
+  it('skips injection when the field maxLength would be exceeded', () => {
+    const sentinel = 'mhk-' + 'a'.repeat(12); // 16 chars
+    const fields = [field({ index: 0, name: 'notes', maxLength: 5 })]; // too short
+    const [item] = planFormValues(fields, seedrandom('s'), sentinel);
+    expect(item.value).not.toContain(sentinel);
+  });
+
+  it('injects when null sentinel — no change to existing behaviour', () => {
+    const fields = [field({ index: 0, name: 'notes' })];
+    const withNull = planFormValues(fields, seedrandom('s'), null);
+    const withOmitted = planFormValues(fields, seedrandom('s'));
+    expect(withNull).toEqual(withOmitted);
+  });
+});

@@ -48,7 +48,7 @@ function makeRunId(seed) {
   return crypto.createHash('sha1').update(`${seed}-${ts}`).digest('hex').slice(0, 8);
 }
 
-async function executeAction({ action, page, config, rng, breadcrumbs }) {
+async function executeAction({ action, page, config, rng, breadcrumbs, sentinel }) {
   const currentUrl = page.raw.url();
   switch (action.type) {
     case 'CLICK':
@@ -76,7 +76,7 @@ async function executeAction({ action, page, config, rng, breadcrumbs }) {
         projectRoot: PROJECT_ROOT,
       });
     case 'FORM_FILL':
-      return runFormFill({ page, target: action.target, rng });
+      return runFormFill({ page, target: action.target, rng, sentinel });
     default:
       return { success: false, error: `unknown action ${action.type}` };
   }
@@ -95,7 +95,7 @@ function pickMacro(macros, rng) {
 
 // Runs one crawl arm (authenticated or anon) to completion.
 // Returns { firstBug, firstFlagged, fatalError }. Closes breadcrumbs; caller closes browser.
-async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, stepsDir, targetOrigin }) {
+async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, stepsDir, targetOrigin, sentinel }) {
   const engine = config.browser?.engine ?? 'playwright';
   let firstBug = null;
   let firstFlagged = null;
@@ -290,7 +290,7 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
         'mcts.expand',
         { attributes: { step, 'state.id': stateId, action: action.type, arm: role } },
         async (span) => {
-          result = await executeAction({ action, page, config, rng, breadcrumbs });
+          result = await executeAction({ action, page, config, rng, breadcrumbs, sentinel });
           span.setAttribute('action.success', result.success);
           span.setAttribute('action.latency_ms', result.latencyMs ?? 0);
           await new Promise((r) => setTimeout(r, config.run.humanDelayMs ?? 0));
@@ -464,6 +464,10 @@ async function main() {
   const preConfig = loadConfig({ configPath: args.configPath });
   const seed = seedSource !== null ? Number(seedSource) : preConfig.run.seed;
   const runId = makeRunId(seed);
+  // Unique per-seed marker embedded in FORM_FILL text fields; lets the authz oracle
+  // prove identity-grounded CROSS_ACCOUNT_LEAK (vs. the weaker AUTHZ_UNCERTAIN) when
+  // this specific value comes back in an unauthenticated replay (DECISION_LOG 017).
+  const runSentinel = 'mhk-' + crypto.createHash('sha1').update('sentinel:' + String(seed)).digest('hex').slice(0, 12);
 
   const config = loadConfig({ configPath: args.configPath, runId });
 
@@ -534,6 +538,7 @@ async function main() {
         breadcrumbs,
         stepsDir,
         targetOrigin,
+        sentinel: runSentinel,
       });
 
       if (firstBug && !combinedFirstBug) combinedFirstBug = firstBug;
@@ -555,6 +560,7 @@ async function main() {
             replay,
             allowedDomains: config.target.allowedDomains,
             config: azConfig,
+            sentinel: runSentinel,
           });
           if (az.signal) {
             const flagged = await writeFlaggedReport({

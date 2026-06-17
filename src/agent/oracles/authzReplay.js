@@ -76,6 +76,28 @@ function bodyOverlap(ownedIds, replayBody) {
   return false;
 }
 
+// Search a response body (any depth) for the per-run sentinel string the monkey
+// embedded via FORM_FILL. Finding it in the anon replay body is identity-grounded
+// PROOF of a leak: only a value the authenticated arm just wrote can carry this
+// marker, so it cannot be "intentionally public" prior data.
+function bodyContainsSentinel(value, sentinel, depth = 0) {
+  if (depth > 4 || value == null) return false;
+  if (typeof value === 'string') return value.includes(sentinel);
+  if (Array.isArray(value)) {
+    for (const v of value.slice(0, 50)) {
+      if (bodyContainsSentinel(v, sentinel, depth + 1)) return true;
+    }
+    return false;
+  }
+  if (typeof value === 'object') {
+    for (const v of Object.values(value)) {
+      if (bodyContainsSentinel(v, sentinel, depth + 1)) return true;
+    }
+    return false;
+  }
+  return false;
+}
+
 // User session/bearer tokens stripped for the anon replay. `apikey` / `x-api-key` are
 // KEPT because for Supabase-style backends they are the PUBLIC project key (without
 // which PostgREST returns an infra 401 that masquerades as "enforced"). Assumption: an
@@ -100,14 +122,17 @@ function anonHeaders(headers) {
 /**
  * Replay the authenticated arm's reads as an unauthenticated client.
  *
- * @param {object} opts
- * @param {Array}  opts.reads          - the authenticated arm's captures (network.js shape)
- * @param {object} opts.replay         - isolatedClient() — fresh, no cookies; fetch(url,{headers})→{status,body}
- * @param {Array}  opts.allowedDomains - config.target.allowedDomains
- * @param {object} opts.config         - oracle.authzReplay config block
+ * @param {object}      opts
+ * @param {Array}       opts.reads          - the authenticated arm's captures (network.js shape)
+ * @param {object}      opts.replay         - isolatedClient() — fresh, no cookies; fetch(url,{headers})→{status,body}
+ * @param {Array}       opts.allowedDomains - config.target.allowedDomains
+ * @param {object}      opts.config         - oracle.authzReplay config block
+ * @param {string|null} opts.sentinel       - per-run sentinel from makeSentinel(seed); when present,
+ *   reads whose body contains it are sentinel-grounded: if the anon replay also carries the
+ *   sentinel, that is identity-grounded PROOF (emits CROSS_ACCOUNT_LEAK, not AUTHZ_UNCERTAIN).
  * @returns {Promise<{ signal: string|null, detail?: string, reason?: string }>}
  */
-export async function checkAuthzReplay({ reads = [], replay, allowedDomains = [], config = {} }) {
+export async function checkAuthzReplay({ reads = [], replay, allowedDomains = [], config = {}, sentinel = null }) {
   const { enabled = true, maxReplays = 8, publicAllowlist = [] } = config;
   if (!enabled || !replay || !reads?.length) return { signal: null };
 
@@ -126,12 +151,16 @@ export async function checkAuthzReplay({ reads = [], replay, allowedDomains = []
     const key = c.url.split('#')[0];
     if (seen.has(key)) continue;
     seen.add(key);
-    candidates.push({ url: key, headers: anonHeaders(c.requestHeaders), ownedIds });
+    // hasSentinel: the sentinel the monkey wrote appears in this authenticated read body —
+    // so if anon gets it back too, we have identity-grounded proof, not just id overlap.
+    const hasSentinel = sentinel ? bodyContainsSentinel(c.responseBody, sentinel) : false;
+    candidates.push({ url: key, headers: anonHeaders(c.requestHeaders), ownedIds, hasSentinel });
     if (candidates.length >= maxReplays) break;
   }
   if (!candidates.length) return { signal: null };
 
   const leaks = [];
+  const sentinelLeaks = [];
   for (const cand of candidates) {
     let res;
     try {
@@ -141,9 +170,25 @@ export async function checkAuthzReplay({ reads = [], replay, allowedDomains = []
     }
     if (res && is2xx(res.status) && bodyOverlap(cand.ownedIds, res.body)) {
       leaks.push(cand.url);
+      // Proven: the sentinel the monkey wrote is still visible to anon — cannot be
+      // prior public data; the FORM_FILL that created it happened this session.
+      if (cand.hasSentinel && bodyContainsSentinel(res.body, sentinel)) {
+        sentinelLeaks.push(cand.url);
+      }
     }
   }
   if (!leaks.length) return { signal: null };
+
+  if (sentinelLeaks.length) {
+    return {
+      signal: 'CROSS_ACCOUNT_LEAK',
+      detail: `anon replay returned sentinel-marked data without the user token for ${sentinelLeaks.length} endpoint(s): ${sentinelLeaks.slice(0, 3).join(', ')}`,
+      reason:
+        'A record the monkey wrote this session (carrying a unique sentinel marker) was readable by an ' +
+        'unauthenticated replay. The sentinel cannot be pre-existing public data, so this is ' +
+        'confirmed missing Row-Level Security (OWASP API1 BOLA / Supabase RLS-off).',
+    };
+  }
 
   return {
     signal: 'AUTHZ_UNCERTAIN',

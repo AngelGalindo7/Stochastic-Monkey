@@ -5,7 +5,7 @@ import { planFormValues } from './formPlan.js';
 // This is what turns a random crawl into one that actually produces backend writes —
 // the prerequisite for the cross-layer (STATE_*) and authz oracles to have anything
 // to inspect.
-export async function runFormFill({ page, target, rng }) {
+export async function runFormFill({ page, target, rng, sentinel = null }) {
   const start = Date.now();
   const index = target?.formIndex ?? 0;
   try {
@@ -13,7 +13,7 @@ export async function runFormFill({ page, target, rng }) {
     if (!fields?.length) {
       return { success: false, error: 'no fillable fields', latencyMs: Date.now() - start };
     }
-    const plan = planFormValues(fields, rng);
+    const plan = planFormValues(fields, rng, sentinel);
     const { filled, submitted } = await applyFormValues(page.raw, plan);
     return {
       success: filled > 0,
