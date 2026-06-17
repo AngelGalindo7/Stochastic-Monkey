@@ -48,6 +48,16 @@ describe('denylist', () => {
   it('denies unparseable urls', () => {
     expect(isDenied('not a url').denied).toBe(true);
   });
+  it('does not deny compound-word hostnames that merely contain a sensitive substring', () => {
+    // "mentalhealth" contains "health" but is not a health-service domain
+    expect(isDenied('https://mentalhealth-tracker.lovable.app').denied).toBe(false);
+    // "cryptography" contains "crypto" but is not a finance site
+    expect(isDenied('https://cryptography-tool.lovable.app').denied).toBe(false);
+    // "banksy" contains "bank" but is not a bank
+    expect(isDenied('https://banksy-art.lovable.app').denied).toBe(false);
+    // "therapist" starts with "therap" but is embedded — not a standalone segment
+    expect(isDenied('https://therapistfinder.lovable.app').denied).toBe(false);
+  });
 });
 
 describe('manifest.isSettled', () => {
