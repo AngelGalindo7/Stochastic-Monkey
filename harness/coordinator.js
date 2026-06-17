@@ -93,8 +93,13 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/claim') {
     const { workerId = 'anon' } = await readBody(req);
     const target = claim(q, workerId, Date.now());
-    if (target) appendLine(manifestPath, { slug: target.slug, url: target.url, status: 'running', worker: workerId, ts: nowIso() });
-    return send(200, { target });
+    if (target) {
+      appendLine(manifestPath, { slug: target.slug, url: target.url, status: 'running', worker: workerId, ts: nowIso() });
+      return send(200, { target });
+    }
+    // Nothing claimable. Tell the worker whether the whole run is drained (exit)
+    // or work is just in-flight elsewhere (poll again — a lease may re-queue).
+    return send(200, { target: null, done: stats(q).remaining === 0 });
   }
 
   if (req.method === 'POST' && req.url === '/result') {

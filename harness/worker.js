@@ -69,25 +69,34 @@ let active = true;
 let processed = 0;
 let totalFindings = 0;
 
+const MAX_UNREACHABLE = 3; // consecutive failures before assuming the run is over
+
 async function loop(lane) {
+  let unreachable = 0;
   while (active) {
-    let claim;
+    let resp;
     try {
-      claim = await post('/claim', { workerId });
+      resp = await post('/claim', { workerId });
+      unreachable = 0;
     } catch (err) {
-      console.error(`[worker ${lane}] coordinator unreachable: ${err.message} — retrying in 5s`);
+      unreachable += 1;
+      if (unreachable >= MAX_UNREACHABLE) {
+        console.error(`[worker ${lane}] coordinator gone after ${unreachable} tries — exiting`);
+        active = false;
+        break;
+      }
+      console.error(`[worker ${lane}] coordinator unreachable (${unreachable}/${MAX_UNREACHABLE}): ${err.message}`);
       await sleep(5000);
       continue;
     }
-    const target = claim.target;
+
+    const target = resp.target;
     if (!target) {
-      // Nothing pending right now. Coordinator may still re-queue crashed leases,
-      // so poll a few times before giving up.
-      await sleep(3000);
-      const s = await fetch(`${base}/stats`).then((r) => r.json()).catch(() => null);
-      if (s && s.remaining === 0) { active = false; break; }
+      if (resp.done) { active = false; break; } // whole run drained → exit cleanly
+      await sleep(2000); // work in-flight elsewhere; a lease may re-queue
       continue;
     }
+
     try {
       const r = await processOne(target);
       processed++;
