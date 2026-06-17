@@ -231,3 +231,51 @@ describe('checkAuthzReplay — bookkeeping', () => {
     expect((await checkAuthzReplay({ reads: [ownedRead()], replay: null, ...DEFAULTS })).signal).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Sentinel-grounded upgrade: CROSS_ACCOUNT_LEAK
+// ---------------------------------------------------------------------------
+
+describe('checkAuthzReplay — sentinel upgrade to CROSS_ACCOUNT_LEAK', () => {
+  const SENTINEL = 'mhk-deadbeef1234';
+
+  function sentinelRead() {
+    return ownedRead({
+      responseBody: [{ id: 42, notes: `Test User ${SENTINEL}` }],
+    });
+  }
+
+  it('upgrades to CROSS_ACCOUNT_LEAK when anon replay also carries the sentinel', async () => {
+    const replay = makeReplay([{ status: 200, body: [{ id: 42, notes: `Test User ${SENTINEL}` }] }]);
+    const result = await checkAuthzReplay({ reads: [sentinelRead()], replay, ...DEFAULTS, sentinel: SENTINEL });
+    expect(result.signal).toBe('CROSS_ACCOUNT_LEAK');
+    expect(result.detail).toMatch(/sentinel-marked/);
+  });
+
+  it('stays AUTHZ_UNCERTAIN when anon body has the id but NOT the sentinel', async () => {
+    // anon replay returned id 42 but without the sentinel value — may be pre-existing public data
+    const replay = makeReplay([{ status: 200, body: [{ id: 42, notes: 'other content' }] }]);
+    const result = await checkAuthzReplay({ reads: [sentinelRead()], replay, ...DEFAULTS, sentinel: SENTINEL });
+    expect(result.signal).toBe('AUTHZ_UNCERTAIN');
+  });
+
+  it('stays AUTHZ_UNCERTAIN when authed read does not carry the sentinel', async () => {
+    // The authed response had no sentinel → hasSentinel=false → cannot upgrade
+    const replay = makeReplay([{ status: 200, body: [{ id: 42, notes: `Test User ${SENTINEL}` }] }]);
+    const result = await checkAuthzReplay({ reads: [ownedRead()], replay, ...DEFAULTS, sentinel: SENTINEL });
+    expect(result.signal).toBe('AUTHZ_UNCERTAIN');
+  });
+
+  it('finds the sentinel nested inside an object value', async () => {
+    const read = ownedRead({ responseBody: { data: { id: 42, meta: { label: `x ${SENTINEL}` } } } });
+    const replay = makeReplay([{ status: 200, body: { data: { id: 42, meta: { label: `x ${SENTINEL}` } } } }]);
+    const result = await checkAuthzReplay({ reads: [read], replay, ...DEFAULTS, sentinel: SENTINEL });
+    expect(result.signal).toBe('CROSS_ACCOUNT_LEAK');
+  });
+
+  it('is unchanged when sentinel is null (falls back to existing AUTHZ_UNCERTAIN logic)', async () => {
+    const replay = makeReplay([{ status: 200, body: [{ id: 42 }] }]);
+    const result = await checkAuthzReplay({ reads: [ownedRead()], replay, ...DEFAULTS, sentinel: null });
+    expect(result.signal).toBe('AUTHZ_UNCERTAIN');
+  });
+});
