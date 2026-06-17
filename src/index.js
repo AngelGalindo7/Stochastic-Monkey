@@ -52,7 +52,7 @@ async function executeAction({ action, page, config, rng, breadcrumbs }) {
     case 'INPUT':
       return runInput({ page, target: action.target, dataPool: config.actions.dataPool ?? [], rng });
     case 'NAVIGATION':
-      return runNavigate({ page, allowedDomains: config.target.allowedDomains, currentUrl });
+      return runNavigate({ page, allowedDomains: config.target.allowedDomains, currentUrl, rng });
     case 'SCROLL':
       return runScroll({ page, rng });
     case 'BACK':
