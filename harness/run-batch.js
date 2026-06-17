@@ -72,6 +72,7 @@ const outRoot = path.resolve(PROJECT_ROOT, args.outDir);
 fs.mkdirSync(outRoot, { recursive: true });
 const manifestPath = path.join(outRoot, 'manifest.jsonl');
 const resultsPath = path.join(outRoot, 'results.jsonl');
+const denyLogPath = path.join(outRoot, 'deny-log.jsonl');
 const templatePath = path.join(PROJECT_ROOT, 'harness', 'config.template.yaml');
 
 const extraDeny = args.denyFile && fs.existsSync(args.denyFile)
@@ -95,6 +96,8 @@ for (const t of targets) {
   const deny = isDenied(t.url);
   if (deny.denied) {
     appendRow(manifestPath, { slug, url: t.url, status: 'skipped', reason: deny.reason, ts: nowStamp() });
+    appendRow(denyLogPath, { slug, url: t.url, reason: deny.reason, ts: nowStamp() });
+    console.log(`[skip] ${t.url}  reason: ${deny.reason}`);
     skippedDeny++;
     continue;
   }
@@ -131,7 +134,7 @@ await runPool(
       logPath: path.join(runDir, 'run.log'),
     });
 
-    const findings = harvest({ bugRoot, slug: t.slug, url: t.url, platform: t.platform ?? null });
+    const findings = harvest({ bugRoot, slug: t.slug, url: t.url, platform: t.platform ?? null, disclosure_channel: t.disclosure_channel ?? 'none' });
     for (const f of findings) {
       appendRow(resultsPath, f);
       totalFindings.count++;
