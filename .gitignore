@@ -70,3 +70,7 @@ Desktop.ini
 CLAUDE.md
 PROJECT_MAP.md
 docs/
+
+# Distributed coordinator/worker output
+runs-dist/
+runs-worker/

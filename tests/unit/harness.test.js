@@ -11,6 +11,7 @@ import {
   parseWaybackCdx, waybackCdxUrl,
   parseRapidDns, rapidDnsUrl,
 } from '../../harness/lib/discover.js';
+import { createQueue, claim, complete, reap, preset, stats } from '../../harness/lib/queue.js';
 
 // Build a fake Supabase anon JWT (header.payload.signature, base64url).
 function fakeJwt(payload) {
@@ -221,5 +222,48 @@ describe('discover (crt.sh)', () => {
     const html = '<td>app-one.lovable.app</td><td>x</td><td>two.lovable.app</td> lovable.app other.example.com';
     expect(parseRapidDns(html, 'lovable.app')).toEqual(['app-one.lovable.app', 'two.lovable.app']);
     expect(rapidDnsUrl('lovable.app')).toBe('https://rapiddns.io/subdomain/lovable.app?full=1');
+  });
+});
+
+describe('distributed queue', () => {
+  const mk = () => createQueue(
+    [{ url: 'https://a', slug: 'a' }, { url: 'https://b', slug: 'b' }],
+    { leaseMs: 1000, maxAttempts: 2 },
+  );
+
+  it('hands each pending target to exactly one claimant', () => {
+    const q = mk();
+    const t1 = claim(q, 'w1', 1000);
+    const t2 = claim(q, 'w2', 1000);
+    const t3 = claim(q, 'w3', 1000);
+    expect([t1.slug, t2.slug].sort()).toEqual(['a', 'b']); // both claimed, distinct
+    expect(t1.slug).not.toBe(t2.slug); // no double-claim
+    expect(t3).toBeNull(); // nothing left
+  });
+
+  it('completing a target removes it from the queue', () => {
+    const q = mk();
+    claim(q, 'w1', 1000);
+    complete(q, 'a', { status: 'done', findings: 3 });
+    const s = stats(q);
+    expect(s.done).toBe(1);
+    expect(s.findings).toBe(3);
+  });
+
+  it('re-queues an expired lease (crash recovery), then fails past maxAttempts', () => {
+    const q = mk();
+    const t = claim(q, 'w1', 1000); // attempt 1, lease until 2000
+    expect(reap(q, 2001)).toBe(1); // expired -> pending
+    const again = claim(q, 'w2', 3000); // attempt 2, same target re-handed
+    expect(again.slug).toBe(t.slug);
+    reap(q, 99999); // attempt 2 expired, at maxAttempts -> failed
+    expect(stats(q).failed).toBe(1);
+  });
+
+  it('preset marks a slug settled (denylist/resume)', () => {
+    const q = mk();
+    preset(q, 'a', 'skipped');
+    expect(claim(q, 'w1', 1000).slug).toBe('b'); // 'a' skipped, only 'b' claimable
+    expect(stats(q).skipped).toBe(1);
   });
 });
