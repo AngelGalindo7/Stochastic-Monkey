@@ -2,9 +2,13 @@
 # The harness clones this per target and fills in: target.url, target.allowedDomains,
 # run.seed, triage.bugRoot, and the observability paths (absolute, per-target).
 #
-# "Passive" = read-only crawl. No form payloads, no destructive macros, no auth.
-# Only the deterministic hard-signal oracles fire (HTTP 5xx / 4xx-nav / asset-4xx /
-# pageerror / DOM_FROZEN). Safe to point at third-party apps you do not own.
+# ── Passive scan boundary ────────────────────────────────────────────────────
+# PERFORMS: GET requests, browser JS execution, link traversal, read-only A11y
+#           inspection, HTTP/console-error recording (5xx, 4xx-nav, asset-4xx,
+#           pageerror, DOM_FROZEN).
+# DOES NOT: Submit forms, authenticate, send POST/PUT/DELETE, type into inputs,
+#           execute destructive macros, or store/exfiltrate application data.
+# ─────────────────────────────────────────────────────────────────────────────
 
 browser:
   engine: puppeteer        # puppeteer works headless on macOS without extra setup

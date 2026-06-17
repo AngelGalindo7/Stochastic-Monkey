@@ -10,6 +10,20 @@ auth. Only the deterministic hard-signal oracles fire (HTTP 5xx / 4xx-nav /
 asset-4xx / pageerror / DOM_FROZEN). Safe for third-party apps you don't own.
 Active testing is deliberately out of scope here.
 
+## Passive scan boundary
+
+**Performs:** GET-based page loads, browser JavaScript execution, link traversal
+(clicking anchor elements), read-only accessibility-tree inspection, and recording
+of HTTP response codes, JS console errors, and asset failures.
+
+**Does not perform:** form submissions, authentication or login of any kind,
+POST/PUT/PATCH/DELETE requests, typing into input fields, destructive macros, or
+storage/exfiltration of application data.
+
+This matches the standard passive-scanning definition: operations indistinguishable
+from a user visiting the page in a normal browser. Active testing (auth, IDOR macros,
+fuzzing) is explicitly out of scope and requires an ownership allowlist.
+
 ## The pipeline
 
 ```
