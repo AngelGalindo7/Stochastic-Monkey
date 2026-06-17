@@ -10,10 +10,11 @@ const BUILTIN_PATTERNS = [
   // Education
   /(^|\.)edu(\.[a-z]{2})?$/i,
   /(^|\.)ac\.[a-z]{2}$/i,
-  // Health
-  /health|medical|clinic|hospital|patient|pharma|therap/i,
+  // Health — keyword must occupy its own hostname segment or sub-segment
+  // (delimited by ^, ., or -) so compound words like mentalhealth-tracker don't FP.
+  /(^|[.-])(health|medical|clinic|hospital|patient|pharma|therap)([.-]|$)/i,
   // Finance
-  /bank|finance|insur|payment|lending|crypto|wallet|broker/i,
+  /(^|[.-])(bank|finance|insur|payment|lending|crypto|wallet|broker)([.-]|$)/i,
 ];
 
 // Build a matcher. `extraHosts` is an optional list of exact hosts or substrings
