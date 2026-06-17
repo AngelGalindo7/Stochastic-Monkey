@@ -165,6 +165,7 @@ async function classifyOne(url) {
     supabaseUrl: fp.supabaseUrl,
     anonKey: fp.anonKey,
     signals: fp.signals,
+    disclosure_channel: 'none',
   })}\n`);
   stats.kept++;
   byPlatform[fp.platform] = (byPlatform[fp.platform] ?? 0) + 1;

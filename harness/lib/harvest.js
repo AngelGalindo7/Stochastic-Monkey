@@ -6,7 +6,7 @@ import path from 'node:path';
 // Each confirmed bug lands in <bugRoot>/<ts>__seed<n>__<severity>/ with a
 // machine-readable severity.json ({severity, signal, surpriseScore}). We read
 // those rather than parsing bug.md so results stay structured.
-export function harvest({ bugRoot, slug = null, url = null, platform = null }) {
+export function harvest({ bugRoot, slug = null, url = null, platform = null, disclosure_channel = 'none' }) {
   const findings = [];
   if (!fs.existsSync(bugRoot)) return findings;
 
@@ -23,6 +23,7 @@ export function harvest({ bugRoot, slug = null, url = null, platform = null }) {
         slug,
         url,
         platform,
+        disclosure_channel,
         severity: sev.severity ?? 'unknown',
         signal: sev.signal ?? 'unknown',
         surpriseScore: sev.surpriseScore ?? null,
