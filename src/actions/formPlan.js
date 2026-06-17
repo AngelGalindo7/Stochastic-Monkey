@@ -140,14 +140,18 @@ function pickOption(options) {
 const CONSENT_RE = /\b(agree|terms|accept|consent|privacy|policy|i am over|over 18|confirm|subscribe|opt[- ]?in)\b/;
 
 /**
- * @param {Array} fields - descriptors from perception/forms.js describeForm()
+ * @param {Array}  fields   - descriptors from perception/forms.js describeForm()
  * @param {() => number} rng - seeded RNG (0..1)
+ * @param {string|null} sentinel - per-run marker (e.g. 'mhk-abc…') appended to the first
+ *   free-text fill so the authz oracle can identify sentinel-marked anon reads as
+ *   identity-grounded CROSS_ACCOUNT_LEAK proof rather than mere AUTHZ_UNCERTAIN.
  * @returns {Array<{ index:number, op:'fill'|'select'|'check'|'radio', value:* }>}
  */
-export function planFormValues(fields, rng) {
+export function planFormValues(fields, rng, sentinel = null) {
   const plan = [];
   const ctx = { lastEmail: null, lastPassword: null };
   const seenRadioGroups = new Set();
+  let sentinelInjected = false;
 
   for (const f of fields ?? []) {
     const type = (f.type || '').toLowerCase();
@@ -173,7 +177,17 @@ export function planFormValues(fields, rng) {
     if (['file', 'hidden', 'submit', 'button', 'image', 'reset'].includes(type)) continue;
 
     const { value, structured } = textValueFor({ type, hay, f, rng, ctx });
-    plan.push({ index: f.index, op: 'fill', value: structured ? value : clampText(value, f) });
+    let finalValue = structured ? value : clampText(value, f);
+    // Embed the sentinel into the first free-text fill that has room — the authz oracle
+    // uses it as identity-grounded proof (only a value the monkey just wrote can appear).
+    if (!sentinelInjected && !structured && sentinel) {
+      const withSentinel = finalValue + ' ' + sentinel;
+      if (!f.maxLength || withSentinel.length <= f.maxLength) {
+        finalValue = withSentinel;
+        sentinelInjected = true;
+      }
+    }
+    plan.push({ index: f.index, op: 'fill', value: finalValue });
   }
 
   return plan;
