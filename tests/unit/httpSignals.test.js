@@ -51,6 +51,57 @@ describe('httpSignals.pageEventsToHardSignals — HTTP-code-driven oracle', () =
     expect(signals).toContain('ASSET_4XX');
   });
 
+  it('a genuine hard failure (connection refused) is a bug', () => {
+    const { signals } = pageEventsToHardSignals([
+      { type: 'REQUEST_FAILED', url: 'http://app/api/data', reason: 'net::ERR_CONNECTION_REFUSED' },
+    ]);
+    expect(signals).toContain('ASSET_4XX');
+  });
+
+  it('an aborted request (SPA navigation cancel) is NOT a bug — evidence only', () => {
+    const { signals, evidence } = pageEventsToHardSignals([
+      { type: 'REQUEST_FAILED', url: 'http://app/api/data', reason: 'net::ERR_ABORTED' },
+    ]);
+    expect(signals).toHaveLength(0);
+    expect(evidence.some((e) => e.signal === 'REQUEST_FAILED_BENIGN')).toBe(true);
+  });
+
+  it('an ad-blocked request (ERR_BLOCKED_BY_CLIENT) is NOT a bug', () => {
+    const { signals } = pageEventsToHardSignals([
+      { type: 'REQUEST_FAILED', url: 'http://app/analytics/beacon', reason: 'net::ERR_BLOCKED_BY_CLIENT' },
+    ]);
+    expect(signals).toHaveLength(0);
+  });
+
+  it('a transient connection reset is NOT a bug', () => {
+    const { signals } = pageEventsToHardSignals([
+      { type: 'REQUEST_FAILED', url: 'http://app/api/data', reason: 'net::ERR_CONNECTION_RESET' },
+    ]);
+    expect(signals).toHaveLength(0);
+  });
+
+  it('a real first-party pageerror is a bug', () => {
+    const { signals } = pageEventsToHardSignals([
+      { type: 'PAGEERROR', message: 'TypeError: Cannot read properties of undefined', stack: 'at http://app/main.js:10' },
+    ]);
+    expect(signals).toContain('PAGEERROR');
+  });
+
+  it('an extension-thrown pageerror is NOT a bug — evidence only', () => {
+    const { signals, evidence } = pageEventsToHardSignals([
+      { type: 'PAGEERROR', message: 'Cannot access chrome', stack: 'at chrome-extension://abc/inject.js:1' },
+    ]);
+    expect(signals).toHaveLength(0);
+    expect(evidence.some((e) => e.signal === 'PAGEERROR_NOISE')).toBe(true);
+  });
+
+  it('a ResizeObserver loop pageerror is NOT a bug', () => {
+    const { signals } = pageEventsToHardSignals([
+      { type: 'PAGEERROR', message: 'ResizeObserver loop completed with undelivered notifications.' },
+    ]);
+    expect(signals).toHaveLength(0);
+  });
+
   // Regression: fix(browser puppeteer) had to add resourceType capture because response events were missing it. Without resourceType every 4xx fell to evidence-only — real asset/nav bugs were silently suppressed. These tests show the classification branches by varying resourceType on identical events.
   it('4xx image URL: resourceType=image fires ASSET_4XX; resourceType=undefined goes to evidence only', () => {
     const { signals: withType } = pageEventsToHardSignals([

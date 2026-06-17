@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Two forms</title></head>
+<body>
+  <form id="search">
+    <input type="search" name="q" aria-label="Search">
+    <button type="submit">Search</button>
+  </form>
+
+  <form id="signup">
+    <input type="email" name="email" required>
+    <input type="password" name="password" required minlength="8">
+    <button type="submit">Sign up</button>
+  </form>
+
+  <script>
+    document.getElementById('search').addEventListener('submit', function (e) {
+      e.preventDefault();
+      window.__searchCount = (window.__searchCount || 0) + 1;
+    });
+    document.getElementById('signup').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var fd = new FormData(e.target);
+      var o = {};
+      fd.forEach(function (v, k) { o[k] = v; });
+      window.__signup = o;
+    });
+  </script>
+</body>
+</html>

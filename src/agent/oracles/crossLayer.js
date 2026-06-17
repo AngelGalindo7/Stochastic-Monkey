@@ -32,23 +32,28 @@ const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 // resource may not be readable yet and a read would race the background job.
 const COMMITTED_STATUSES = new Set([200, 201, 204]);
 
-// Common response shapes for a newly-created resource. Covers top-level id
-// and a single-key data wrapper (JSON:API / FastAPI default).
+// Common response shapes for a newly-created resource. Covers top-level id, a
+// single-key data wrapper (JSON:API / FastAPI default), and the single-row
+// representation array PostgREST/Supabase returns. Returns { key, value } so the
+// verify URL can filter on the right column, or null when no id is extractable.
 const ID_KEYS = ['id', 'uuid'];
 
 function tryExtractCreatedId(body) {
   if (!body || typeof body !== 'object') return null;
+  // PostgREST/Supabase `Prefer: return=representation` insert returns [{...}].
+  // Verify only single-row inserts — multi-row/empty are ambiguous for a single id.
+  if (Array.isArray(body)) {
+    return body.length === 1 ? tryExtractCreatedId(body[0]) : null;
+  }
   for (const key of ID_KEYS) {
     const val = body[key];
-    if (val !== undefined && val !== null) return String(val);
+    if (val !== undefined && val !== null) return { key, value: String(val) };
   }
   // single-key wrapper: { data: { id: 42 } } or { item: { id: 42 } }
   const keys = Object.keys(body);
   if (keys.length === 1) {
     const inner = body[keys[0]];
-    if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
-      return tryExtractCreatedId(inner);
-    }
+    if (inner && typeof inner === 'object') return tryExtractCreatedId(inner);
   }
   return null;
 }
@@ -105,6 +110,19 @@ function isPostgRESTResourceUrl(url, resourceId) {
   return false;
 }
 
+// Supabase/PostgREST mounts collections at /rest/v<n>/<table> and addresses a single
+// row by query filter (?id=eq.<id>), NOT by a /<table>/<id> path. Detect that mount
+// so a created-row verify URL uses the filter the backend actually routes — a path
+// like /rest/v1/items/42 would 404 even though the row persisted correctly.
+function isPostgRESTCollectionUrl(url) {
+  try {
+    const segs = new URL(url).pathname.split('/').filter(Boolean);
+    return segs.some((s, i) => s === 'rest' && /^v\d+$/i.test(segs[i + 1] ?? ''));
+  } catch {
+    return false;
+  }
+}
+
 // Resolve the URL to GET for verification and the check mode.
 //   DELETE / PUT / PATCH: resource ID is in the request URL (W3 already parsed it).
 //   POST to collection:   resource ID comes from the response body.
@@ -139,9 +157,13 @@ function resolveVerify(capture) {
       }
       return null; // action endpoint
     }
-    const createdId = tryExtractCreatedId(responseBody);
-    if (!createdId) return null;
-    return { verifyUrl: `${cleanUrl}/${createdId}`, mode: 'persist' };
+    const created = tryExtractCreatedId(responseBody);
+    if (!created) return null;
+    // PostgREST addresses the new row by filter; path-style REST by /<collection>/<id>.
+    const verifyUrl = isPostgRESTCollectionUrl(cleanUrl)
+      ? `${cleanUrl}?${created.key}=eq.${created.value}`
+      : `${cleanUrl}/${created.value}`;
+    return { verifyUrl, mode: 'persist' };
   }
 
   return null;
@@ -162,6 +184,20 @@ async function pollUntil(client, url, predicate, { maxAttempts, delayMs, fetchOp
     } catch { /* network error — don't count as predicate failure, retry */ }
   }
   return { satisfied: false, last };
+}
+
+// Decide whether a verification read shows the resource as ABSENT.
+//   - status in goneStatuses (404/410, path-style REST) → absent.
+//   - PostgREST returns 200 with a JSON array for a ?col=eq. filter read: a present
+//     row is a non-empty array, a gone row is []. A status-only check is blind to this
+//     (both are 200), so judge by the body when it is an array.
+function isAbsent(response, goneSet) {
+  if (!response) return false;
+  if (goneSet.has(response.status)) return true;
+  if (response.status >= 200 && response.status < 300 && Array.isArray(response.body)) {
+    return response.body.length === 0;
+  }
+  return false;
 }
 
 /**
@@ -200,7 +236,7 @@ export async function checkCrossLayer({ captures, client, allowedDomains = [], c
   if (mode === 'delete') {
     if (softDelete) return { signal: null };
     const { satisfied, last } = await pollUntil(
-      client, verifyUrl, (r) => goneSet.has(r.status),
+      client, verifyUrl, (r) => isAbsent(r, goneSet),
       { maxAttempts: pollAttempts, delayMs: pollDelayMs, fetchOptions },
     );
     if (satisfied || !last) return { signal: null };
@@ -212,7 +248,7 @@ export async function checkCrossLayer({ captures, client, allowedDomains = [], c
 
   // mode === 'persist' (POST / PUT / PATCH)
   const { satisfied, last } = await pollUntil(
-    client, verifyUrl, (r) => !goneSet.has(r.status),
+    client, verifyUrl, (r) => !isAbsent(r, goneSet),
     { maxAttempts: pollAttempts, delayMs: pollDelayMs, fetchOptions },
   );
   if (satisfied || !last) return { signal: null };

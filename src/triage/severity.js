@@ -5,7 +5,6 @@ export const SIGNAL_SEVERITY = {
   ASSET_4XX: 'medium',
   REQUEST_FAILED: 'medium',
   CONSOLE_ERROR: 'medium',
-  PERF_BREACH: 'low',
   DOM_FROZEN: 'medium',
   STATE_NOT_DELETED: 'critical',
   STATE_NOT_PERSISTED: 'critical',
