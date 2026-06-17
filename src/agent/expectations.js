@@ -45,6 +45,11 @@ export const HARD_SIGNALS = {
   // (adversarial report: "cross-layer differential where the contract is unambiguous").
   STATE_NOT_DELETED: { score: 1.0, severity: 'critical', tier: 'auto-assert' },
   STATE_NOT_PERSISTED: { score: 1.0, severity: 'critical', tier: 'auto-assert' },
+  // Content-diff verdict: a PUT/PATCH was committed (2xx) and the resource
+  // persists, but the verify GET returned different values for the written fields.
+  // flag-for-review (not auto-assert) because server-side normalization — trimming,
+  // lowercasing, timestamps — can legitimately alter string representations.
+  STATE_WRONG_VALUE: { score: 0.6, severity: 'medium', tier: 'flag-for-review' },
 
   // Authorization-replay verdicts, emitted by the future replay oracle (the
   // recorder/replayer/orchestrator wiring lands separately). Split across the two

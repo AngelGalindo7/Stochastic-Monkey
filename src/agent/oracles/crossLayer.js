@@ -200,6 +200,48 @@ function isAbsent(response, goneSet) {
   return false;
 }
 
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T|\s)/;
+
+// Returns a flat { field: primitiveValue } map of the fields the monkey wrote.
+// Skips nulls, objects, arrays, and ISO-date strings — server normalization of
+// timestamps is legitimate and would produce false positives on string comparison.
+// Returns null when requestBody is not a plain non-array object or no primitive
+// fields survive the filter.
+function extractWrittenFields(requestBody) {
+  if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(requestBody)) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'object') continue;
+    if (typeof v === 'string' && ISO_DATE_RE.test(v)) continue;
+    out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// Compare written fields against the verify GET response body.
+// Unwraps single-row PostgREST arrays (length === 1). Fields absent from the
+// response body are silently skipped — projection/sparse reads are not a bug.
+// Comparison uses String() coercion: server stores 42 (int), request sent "42"
+// (string from form input) — semantically equal, must not fire.
+function findMismatchedFields(writtenFields, responseBody) {
+  let body = responseBody;
+  if (Array.isArray(body)) {
+    if (body.length !== 1) return [];
+    body = body[0];
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return [];
+  const mismatches = [];
+  for (const [field, written] of Object.entries(writtenFields)) {
+    if (!(field in body)) continue;
+    const got = body[field];
+    if (got === null || got === undefined) continue;
+    if (typeof got === 'object') continue;
+    if (String(got) !== String(written)) mismatches.push({ field, written, got });
+  }
+  return mismatches;
+}
+
 /**
  * Check whether a committed mutation's effect is visible via the API.
  *
@@ -251,9 +293,27 @@ export async function checkCrossLayer({ captures, client, allowedDomains = [], c
     client, verifyUrl, (r) => !isAbsent(r, goneSet),
     { maxAttempts: pollAttempts, delayMs: pollDelayMs, fetchOptions },
   );
-  if (satisfied || !last) return { signal: null };
-  return {
-    signal: 'STATE_NOT_PERSISTED',
-    detail: `${mutation.method} ${mutation.url} → ${mutation.status}; GET ${verifyUrl} returned ${last.status} after ${pollAttempts} poll(s)`,
-  };
+  if (!last) return { signal: null };
+  if (!satisfied) {
+    return {
+      signal: 'STATE_NOT_PERSISTED',
+      detail: `${mutation.method} ${mutation.url} → ${mutation.status}; GET ${verifyUrl} returned ${last.status} after ${pollAttempts} poll(s)`,
+    };
+  }
+  // Resource persisted — check content fidelity for PUT/PATCH with a request body.
+  // flag-for-review (not auto-assert): server-side normalization (trimming, lowercasing,
+  // timestamp formatting) can legitimately produce different string values.
+  if ((mutation.method === 'PUT' || mutation.method === 'PATCH') && mutation.requestBody) {
+    const writtenFields = extractWrittenFields(mutation.requestBody);
+    if (writtenFields) {
+      const mismatches = findMismatchedFields(writtenFields, last.body);
+      if (mismatches.length) {
+        return {
+          signal: 'STATE_WRONG_VALUE',
+          detail: `${mutation.method} ${mutation.url}; GET ${verifyUrl} has wrong values: ${mismatches.map((m) => `${m.field} (wrote ${JSON.stringify(m.written)}, got ${JSON.stringify(m.got)})`).join(', ')}`,
+        };
+      }
+    }
+  }
+  return { signal: null };
 }

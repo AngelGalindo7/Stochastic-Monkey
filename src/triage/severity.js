@@ -8,6 +8,7 @@ export const SIGNAL_SEVERITY = {
   DOM_FROZEN: 'medium',
   STATE_NOT_DELETED: 'critical',
   STATE_NOT_PERSISTED: 'critical',
+  STATE_WRONG_VALUE: 'medium',
   BROKEN_IMAGE: 'low',
 };
 
