@@ -84,6 +84,11 @@ const INTENTIONAL_ORACLE_ONLY = new Set([
   // severity directly (adversarial A1/A3).
   'CROSS_ACCOUNT_LEAK',
   'AUTHZ_UNCERTAIN',
+  // Passive security oracles — synthesized by checkSecurityHeaders / checkCookieSecurity /
+  // checkInfoDisclosure, not emitted as raw browser page events.
+  'MISSING_SECURITY_HEADERS',
+  'INSECURE_COOKIES',
+  'INFO_DISCLOSURE',
 ]);
 
 describe('signal consistency: HARD_SIGNALS coverage in SIGNAL_SEVERITY', () => {
