@@ -12,6 +12,7 @@ import {
   parseRapidDns, rapidDnsUrl,
 } from '../../harness/lib/discover.js';
 import { createQueue, claim, complete, reap, preset, stats } from '../../harness/lib/queue.js';
+import { buildProbeEmail, parseOpenApiTables, PROBE_DOMAIN } from '../../harness/probe.js';
 
 // Build a fake Supabase anon JWT (header.payload.signature, base64url).
 function fakeJwt(payload) {
@@ -275,5 +276,51 @@ describe('distributed queue', () => {
     preset(q, 'a', 'skipped');
     expect(claim(q, 'w1', 1000).slug).toBe('b'); // 'a' skipped, only 'b' claimable
     expect(stats(q).skipped).toBe(1);
+  });
+});
+
+describe('probe helpers', () => {
+  it('buildProbeEmail produces a parseable email with .invalid TLD', () => {
+    const email = buildProbeEmail('my-app-lovable-app', 'a', 'abc123');
+    expect(email).toMatch(/^probe-a-/);
+    expect(email).toContain(`@${PROBE_DOMAIN}`);
+    expect(email).toContain('.invalid');
+  });
+
+  it('buildProbeEmail truncates slug to 16 chars', () => {
+    const longSlug = 'a'.repeat(40);
+    const email = buildProbeEmail(longSlug, 'b', 'xyz');
+    const local = email.split('@')[0];
+    // local = "probe-b-" + slug[:16] + "-" + runId
+    expect(local).toBe(`probe-b-${'a'.repeat(16)}-xyz`);
+  });
+
+  it('buildProbeEmail differs for user a vs b (no collision)', () => {
+    const a = buildProbeEmail('my-slug', 'a', 'r1');
+    const b = buildProbeEmail('my-slug', 'b', 'r1');
+    expect(a).not.toBe(b);
+  });
+
+  it('parseOpenApiTables extracts user-facing table names', () => {
+    const spec = {
+      paths: {
+        '/profiles': {},
+        '/posts': {},
+        '/rpc/my_func': {},
+        '/rpc': {},
+      },
+    };
+    const tables = parseOpenApiTables(spec);
+    expect(tables).toContain('profiles');
+    expect(tables).toContain('posts');
+    expect(tables).not.toContain('rpc');
+    expect(tables).not.toContain('rpc/my_func');
+    expect(tables).not.toContain('');
+  });
+
+  it('parseOpenApiTables returns empty array for missing/empty spec', () => {
+    expect(parseOpenApiTables({})).toEqual([]);
+    expect(parseOpenApiTables(null)).toEqual([]);
+    expect(parseOpenApiTables(undefined)).toEqual([]);
   });
 });
