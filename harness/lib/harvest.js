@@ -1,36 +1,40 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Collect normalized findings from a target's BUG/ output dir.
+// Collect normalized findings from a target's BUG/ and FLAGGED/ output dirs.
 //
-// Each confirmed bug lands in <bugRoot>/<ts>__seed<n>__<severity>/ with a
-// machine-readable severity.json ({severity, signal, surpriseScore}). We read
-// those rather than parsing bug.md so results stay structured.
-export function harvest({ bugRoot, slug = null, url = null, platform = null, disclosure_channel = 'none' }) {
+// BUG severity.json:     { severity, signal, surpriseScore }
+// FLAGGED severity.json: { tier, confidence, signal, severity, score, reason }
+// Both shapes are normalised into the same finding record.
+export function harvest({ bugRoot, flaggedRoot = null, slug = null, url = null, platform = null, disclosure_channel = 'none' }) {
   const findings = [];
-  if (!fs.existsSync(bugRoot)) return findings;
 
-  for (const entry of fs.readdirSync(bugRoot)) {
-    // Bug folders are named "<ts>__seed<n>__<severity>"; run-id folders (which
-    // only hold trace/breadcrumb/steps) are not — skip those.
-    if (!entry.includes('__seed')) continue;
-    const folder = path.join(bugRoot, entry);
-    const sevPath = path.join(folder, 'severity.json');
-    if (!fs.existsSync(sevPath)) continue;
-    try {
-      const sev = JSON.parse(fs.readFileSync(sevPath, 'utf8'));
-      findings.push({
-        slug,
-        url,
-        platform,
-        disclosure_channel,
-        severity: sev.severity ?? 'unknown',
-        signal: sev.signal ?? 'unknown',
-        surpriseScore: sev.surpriseScore ?? null,
-        folder,
-      });
-    } catch {
-      /* malformed severity.json — skip */
+  for (const [root, tier] of [[bugRoot, 'bug'], [flaggedRoot, 'flag-for-review']]) {
+    if (!root || !fs.existsSync(root)) continue;
+    for (const entry of fs.readdirSync(root)) {
+      // Report folders are named "<ts>__seed<n>__<severity>"; run-id folders
+      // (trace/breadcrumb/steps only) are not — skip those.
+      if (!entry.includes('__seed')) continue;
+      const folder = path.join(root, entry);
+      const sevPath = path.join(folder, 'severity.json');
+      if (!fs.existsSync(sevPath)) continue;
+      try {
+        const sev = JSON.parse(fs.readFileSync(sevPath, 'utf8'));
+        findings.push({
+          slug,
+          url,
+          platform,
+          disclosure_channel,
+          tier,
+          severity: sev.severity ?? 'unknown',
+          signal: sev.signal ?? 'unknown',
+          surpriseScore: sev.surpriseScore ?? sev.score ?? null,
+          reason: sev.reason ?? null,
+          folder,
+        });
+      } catch {
+        /* malformed severity.json — skip */
+      }
     }
   }
   return findings;
