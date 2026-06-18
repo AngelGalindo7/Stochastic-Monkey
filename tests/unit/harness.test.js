@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { harvest } from '../../harness/lib/harvest.js';
 import { slugify } from '../../harness/lib/slug.js';
 import { makeDenylist } from '../../harness/lib/denylist.js';
 import { isSettled } from '../../harness/lib/manifest.js';
@@ -322,5 +326,103 @@ describe('probe helpers', () => {
     expect(parseOpenApiTables({})).toEqual([]);
     expect(parseOpenApiTables(null)).toEqual([]);
     expect(parseOpenApiTables(undefined)).toEqual([]);
+  });
+});
+
+// ── harvest ──────────────────────────────────────────────────────────────────
+
+function makeSevDir(root, name, payload) {
+  const dir = path.join(root, name);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'severity.json'), JSON.stringify(payload));
+  return dir;
+}
+
+describe('harvest', () => {
+  let tmpDir;
+
+  afterEach(() => {
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = null;
+  });
+
+  it('returns empty array when bugRoot does not exist', () => {
+    expect(harvest({ bugRoot: '/nonexistent/path/BUG' })).toEqual([]);
+  });
+
+  it('collects confirmed bugs from bugRoot with tier=bug', () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harvest-test-'));
+    const bugRoot = path.join(tmpDir, 'BUG');
+    makeSevDir(bugRoot, '2026-01-01T00-00-00Z__seed42__medium', { severity: 'medium', signal: 'HTTP_500', surpriseScore: 0.9 });
+
+    const findings = harvest({ bugRoot, slug: 'my-app', url: 'https://my-app.example.com' });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].tier).toBe('bug');
+    expect(findings[0].signal).toBe('HTTP_500');
+    expect(findings[0].severity).toBe('medium');
+    expect(findings[0].surpriseScore).toBe(0.9);
+    expect(findings[0].slug).toBe('my-app');
+  });
+
+  it('collects flagged signals from flaggedRoot with tier=flag-for-review', () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harvest-test-'));
+    const flaggedRoot = path.join(tmpDir, 'FLAGGED');
+    makeSevDir(flaggedRoot, '2026-01-01T00-00-00Z__seed42__low', {
+      tier: 'flag-for-review', confidence: 'low', signal: 'AUTHZ_UNCERTAIN',
+      severity: 'low', score: 0.5, reason: 'anon read returned same bytes',
+    });
+
+    const findings = harvest({ bugRoot: path.join(tmpDir, 'BUG'), flaggedRoot, url: 'https://x.example.com' });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].tier).toBe('flag-for-review');
+    expect(findings[0].signal).toBe('AUTHZ_UNCERTAIN');
+    expect(findings[0].surpriseScore).toBe(0.5);
+    expect(findings[0].reason).toBe('anon read returned same bytes');
+  });
+
+  it('collects from both roots in one call', () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harvest-test-'));
+    const bugRoot = path.join(tmpDir, 'BUG');
+    const flaggedRoot = path.join(tmpDir, 'FLAGGED');
+    makeSevDir(bugRoot, '2026-01-01T00-00-00Z__seed42__high', { severity: 'high', signal: 'PAGEERROR', surpriseScore: 1.0 });
+    makeSevDir(flaggedRoot, '2026-01-01T00-01-00Z__seed42__low', { tier: 'flag-for-review', confidence: 'low', signal: 'CONSOLE_ERROR', severity: 'low', score: 0.3, reason: 'first-party error' });
+
+    const findings = harvest({ bugRoot, flaggedRoot });
+    expect(findings).toHaveLength(2);
+    const tiers = findings.map((f) => f.tier).sort();
+    expect(tiers).toEqual(['bug', 'flag-for-review']);
+  });
+
+  it('skips folders that do not contain __seed (run-id trace dirs)', () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harvest-test-'));
+    const bugRoot = path.join(tmpDir, 'BUG');
+    // run-id dir (no __seed)
+    const runIdDir = path.join(bugRoot, 'a1b2c3d4');
+    fs.mkdirSync(path.join(runIdDir, 'steps'), { recursive: true });
+    // valid bug dir
+    makeSevDir(bugRoot, '2026-01-01T00-00-00Z__seed42__medium', { severity: 'medium', signal: 'HTTP_500', surpriseScore: 0.8 });
+
+    const findings = harvest({ bugRoot });
+    expect(findings).toHaveLength(1);
+  });
+
+  it('skips entries with malformed severity.json', () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harvest-test-'));
+    const bugRoot = path.join(tmpDir, 'BUG');
+    const dir = path.join(bugRoot, '2026-01-01T00-00-00Z__seed42__medium');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'severity.json'), 'not json {{{{');
+
+    expect(harvest({ bugRoot })).toEqual([]);
+  });
+
+  it('gracefully returns empty when flaggedRoot is null', () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'harvest-test-'));
+    const bugRoot = path.join(tmpDir, 'BUG');
+    makeSevDir(bugRoot, '2026-01-01T00-00-00Z__seed42__medium', { severity: 'medium', signal: 'HTTP_500', surpriseScore: 0.7 });
+
+    const findings = harvest({ bugRoot, flaggedRoot: null });
+    expect(findings).toHaveLength(1);
+    expect(findings.every((f) => f.tier === 'bug')).toBe(true);
   });
 });
