@@ -31,12 +31,14 @@ export function generateConfig({ target, runDir, templatePath, seed = 42 }) {
   for (const d of target.allowedDomains ?? []) allowed.add(d);
 
   const bugRoot = path.resolve(runDir, 'BUG');
+  const flaggedRoot = path.resolve(runDir, 'FLAGGED');
 
   tpl.target.url = url;
   tpl.target.allowedDomains = [...allowed];
   tpl.run.seed = seed;
   tpl.triage = tpl.triage ?? {};
   tpl.triage.bugRoot = bugRoot;
+  tpl.triage.flaggedRoot = flaggedRoot;
 
   // Keep the literal ${RUN_ID} token — the monkey's loader substitutes it at
   // load time. We only fix the absolute prefix here.
@@ -54,5 +56,5 @@ export function generateConfig({ target, runDir, templatePath, seed = 42 }) {
   const cfgPath = path.join(runDir, 'config.yaml');
   fs.writeFileSync(cfgPath, YAML.stringify(tpl));
 
-  return { cfgPath, bugRoot };
+  return { cfgPath, bugRoot, flaggedRoot };
 }
