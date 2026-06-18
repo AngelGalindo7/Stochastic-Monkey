@@ -125,7 +125,7 @@ await runPool(
     const runDir = path.join(outRoot, t.slug);
     appendRow(manifestPath, { slug: t.slug, url: t.url, status: 'running', ts: nowStamp() });
 
-    const { cfgPath, bugRoot } = generateConfig({ target: t, runDir, templatePath, seed: args.seed });
+    const { cfgPath, bugRoot, flaggedRoot } = generateConfig({ target: t, runDir, templatePath, seed: args.seed });
     const res = await runMonkey({
       projectRoot: PROJECT_ROOT,
       cfgPath,
@@ -134,7 +134,7 @@ await runPool(
       logPath: path.join(runDir, 'run.log'),
     });
 
-    const findings = harvest({ bugRoot, slug: t.slug, url: t.url, platform: t.platform ?? null, disclosure_channel: t.disclosure_channel ?? 'none' });
+    const findings = harvest({ bugRoot, flaggedRoot, slug: t.slug, url: t.url, platform: t.platform ?? null, disclosure_channel: t.disclosure_channel ?? 'none' });
     for (const f of findings) {
       appendRow(resultsPath, f);
       totalFindings.count++;
