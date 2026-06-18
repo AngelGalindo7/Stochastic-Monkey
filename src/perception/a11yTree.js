@@ -59,25 +59,6 @@ export async function snapshotPage(page) {
   return pruneLayout(raw);
 }
 
-// Enumerate file <input type=file> elements on the page so the policy layer can
-// optionally emit UPLOAD candidates. Engine-agnostic: uses the puppeteer/
-// playwright-shaped `$$` selector API. Returns [] when none are present or the
-// engine can't query (e.g. the observe-only Lightpanda CDP path).
-export async function getFileInputs(page) {
-  if (!page || typeof page.$$ !== 'function') return [];
-  try {
-    const handles = await page.$$('input[type=file]');
-    return handles.map((handle, index) => ({
-      role: 'fileinput',
-      name: `file-input-${index}`,
-      index,
-      handle,
-    }));
-  } catch {
-    return [];
-  }
-}
-
 async function snapshotLightpanda(cdp) {
   const { tree } = await cdp.send('LP.getSemanticTree');
   return pruneSemanticTree(tree);
