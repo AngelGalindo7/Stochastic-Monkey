@@ -66,6 +66,13 @@ export const HARD_SIGNALS = {
   //   selection, and it never auto-generates a test.
   CROSS_ACCOUNT_LEAK: { score: 1.0, severity: 'critical', tier: 'auto-assert' },
   AUTHZ_UNCERTAIN: { score: 0.5, severity: 'low', tier: 'flag-for-review' },
+
+  // Passive one-shot security checks (DECISION_LOG 018). All flag-for-review:
+  // a missing header / weak cookie flag / error body pattern is a deployment gap,
+  // not an unambiguous application crash, so they must not share the auto-assert tier.
+  MISSING_SECURITY_HEADERS: { score: 0.3, severity: 'low',    tier: 'flag-for-review' },
+  INSECURE_COOKIES:         { score: 0.4, severity: 'low',    tier: 'flag-for-review' },
+  INFO_DISCLOSURE:          { score: 0.7, severity: 'medium', tier: 'flag-for-review' },
 };
 
 // LLM-backed prediction of an action's expected outcome. No longer called from

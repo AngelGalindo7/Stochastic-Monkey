@@ -108,6 +108,12 @@ export function attachPlaywrightCapture(page, { bodySizeLimit = BODY_SIZE_LIMIT 
           const buf = await res.body();
           if (buf.length <= bodySizeLimit) responseBody = tryParseJson(buf.toString('utf-8'));
         } catch {}
+      } else if (status >= 500 && typeof contentType === 'string' && contentType.startsWith('text/')) {
+        // Capture text/html error pages for the info-disclosure oracle (DECISION_LOG 018).
+        try {
+          const buf = await res.body();
+          if (buf.length <= bodySizeLimit) responseBody = buf.toString('utf-8');
+        } catch {}
       }
 
       const requestHeaders = pickAuthHeaders(req.headers());
@@ -171,8 +177,25 @@ export async function attachPuppeteerCapture(cdpClient, { bodySizeLimit = BODY_S
       requestHeaders: info.requestHeaders,
     };
 
+    const isText5xx = base.status >= 500 &&
+      typeof info.contentType === 'string' &&
+      info.contentType.startsWith('text/');
+
     if (!isJsonContentType(info.contentType)) {
-      captures.push({ ...base, responseBody: null });
+      if (!isText5xx) {
+        captures.push({ ...base, responseBody: null });
+        return;
+      }
+      // Capture text/html error pages for the info-disclosure oracle (DECISION_LOG 018).
+      setImmediate(async () => {
+        try {
+          const { body, base64Encoded } = await cdpClient.send('Network.getResponseBody', { requestId });
+          const rawBuf = base64Encoded ? Buffer.from(body, 'base64') : Buffer.from(body, 'utf-8');
+          captures.push({ ...base, responseBody: rawBuf.length <= bodySizeLimit ? rawBuf.toString('utf-8') : null });
+        } catch {
+          captures.push({ ...base, responseBody: null });
+        }
+      });
       return;
     }
 

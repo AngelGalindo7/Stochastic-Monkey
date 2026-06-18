@@ -29,6 +29,9 @@ import { detectFillableForms } from './perception/forms.js';
 import { checkCrossLayer } from './agent/oracles/crossLayer.js';
 import { checkBrokenImages } from './agent/oracles/structural.js';
 import { checkAuthzReplay } from './agent/oracles/authzReplay.js';
+import { checkSecurityHeaders } from './agent/oracles/securityHeaders.js';
+import { checkCookieSecurity } from './agent/oracles/cookieSecurity.js';
+import { checkInfoDisclosure } from './agent/oracles/infoDisclosure.js';
 import { sharedJarClient, isolatedClient } from './agent/apiClient.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -246,6 +249,27 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
       .catch(() => {});
     breadcrumbs.record('navigate', `goto ${config.target.url}`);
 
+    // One-shot cookie-flag check for authenticated arms (DECISION_LOG 018).
+    if (role !== 'anon') {
+      const ckResult = await checkCookieSecurity(page.raw, config.target.url);
+      if (ckResult.signal) {
+        const ckFlagged = await writeFlaggedReport({
+          rootDir: PROJECT_ROOT,
+          bugRoot: config.triage?.flaggedRoot ?? 'FLAGGED',
+          seed,
+          severity: HARD_SIGNALS.INSECURE_COOKIES.severity,
+          signal: ckResult.signal,
+          reason: ckResult.detail ?? '',
+          pageUrl: config.target.url,
+          breadcrumbs: breadcrumbs.all(),
+          evidence: [{ signal: ckResult.signal, detail: ckResult.detail }],
+          config,
+        });
+        if (!firstFlagged) firstFlagged = ckFlagged;
+        breadcrumbs.record('flag.write', `cookies: ${ckFlagged.folderRel}`);
+      }
+    }
+
     const macroFireProb = config.macros?.fireProbability ?? 0;
     const macroList = config.macros?.list ?? [];
     const stepTimeoutMs = config.run?.stepTimeoutMs ?? 10000;
@@ -364,6 +388,12 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           if (brResult.signal) {
             hardSignals.push(brResult.signal);
             hardEvidence.push({ signal: brResult.signal, detail: brResult.detail });
+          }
+
+          const idResult = checkInfoDisclosure(newCaptures);
+          if (idResult.signal) {
+            hardSignals.push(idResult.signal);
+            hardEvidence.push({ signal: idResult.signal, detail: idResult.detail });
           }
 
           surpriseResult = scoreState({
@@ -529,6 +559,26 @@ async function main() {
   let userCaptures = null;
 
   try {
+    // One-shot security-header probe (DECISION_LOG 018). Runs before any arm so
+    // the finding appears in results even if the crawl itself finds nothing.
+    const shResult = await checkSecurityHeaders(config.target.url);
+    if (shResult.signal) {
+      const shFlagged = await writeFlaggedReport({
+        rootDir: PROJECT_ROOT,
+        bugRoot: config.triage?.flaggedRoot ?? 'FLAGGED',
+        seed,
+        severity: HARD_SIGNALS.MISSING_SECURITY_HEADERS.severity,
+        signal: shResult.signal,
+        reason: shResult.detail ?? '',
+        pageUrl: config.target.url,
+        breadcrumbs: [],
+        evidence: [{ signal: shResult.signal, detail: shResult.detail }],
+        config,
+      });
+      if (!combinedFirstFlagged) combinedFirstFlagged = shFlagged;
+      console.log(`\nFLAGGED (security headers): ${shFlagged.folderRel}`);
+    }
+
     for (const role of declaredRoles) {
       const page = await browser.newPage(role);
       const armSuffix = role === 'user' ? '' : `-${role}`;
