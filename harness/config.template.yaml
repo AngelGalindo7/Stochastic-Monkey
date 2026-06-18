@@ -1,0 +1,93 @@
+# PASSIVE mass-testing template — consumed by the harness, NOT run directly.
+# The harness clones this per target and fills in: target.url, target.allowedDomains,
+# run.seed, triage.bugRoot, and the observability paths (absolute, per-target).
+#
+# ── Passive scan boundary ────────────────────────────────────────────────────
+# PERFORMS: GET requests, browser JS execution, link traversal, read-only A11y
+#           inspection, HTTP/console-error recording (5xx, 4xx-nav, asset-4xx,
+#           pageerror, DOM_FROZEN).
+# DOES NOT: Submit forms, authenticate, send POST/PUT/DELETE, type into inputs,
+#           execute destructive macros, or store/exfiltrate application data.
+# ─────────────────────────────────────────────────────────────────────────────
+
+browser:
+  engine: puppeteer        # puppeteer works headless on macOS without extra setup
+
+target:
+  url: __FILLED_BY_HARNESS__
+  allowedDomains: []       # __FILLED_BY_HARNESS__ (target host + its API/Supabase host)
+  # Never click destructive controls even if the crawl reaches them.
+  blockedSelectors:
+    - "a[href$='/logout']"
+    - "a[href*='/delete']"
+    - "a[href*='/signout']"
+    - "form[action*='delete']"
+    - "[data-destructive='true']"
+
+# No auth block — passive mass runs crawl as an anonymous stranger.
+
+run:
+  seed: 42                 # __FILLED_BY_HARNESS__
+  # Mass-scan profile: shallow + fast so clean apps finish and exit cleanly
+  # (instead of always hitting the harness timeout). Breadth across many targets
+  # beats depth on any one. Raise for deeper single-target runs.
+  maxSteps: 20
+  humanDelayMs: 80
+  thresholdMs: 4000
+  stepTimeoutMs: 10000     # Per-step watchdog: abort a step that hangs (e.g. a
+                           # navigating click that destroys the page context) so
+                           # one stuck app can't burn the whole per-target budget.
+  stopOnFirstBug: false    # Survey the whole app; collect every signal.
+
+actions:
+  # PASSIVE weights: zero INPUT and UPLOAD so the crawler never types into or
+  # uploads to forms. Only read-only navigation actions remain.
+  weights:
+    CLICK: 0.50
+    INPUT: 0.0
+    UPLOAD: 0.0
+    NAVIGATION: 0.25
+    SCROLL: 0.10
+    BACK: 0.08
+    FORWARD: 0.04
+    REFRESH: 0.03     # refresh just reloads — low bug yield, slow; keep rare
+  filesPool: []
+  dataPool: []
+
+# No destructive macros in passive mode.
+macros:
+  fireProbability: 0.0
+  list: []
+
+mcts:
+  ucbC: 1.4
+  rolloutDepth: 1
+  abstractionGranularity: medium
+
+novelty:
+  nameDenylist:
+    - "unread( messages)?"
+    - "online now"
+
+llm:
+  # LLM is not in the detection loop; detection is deterministic. Disabled for
+  # mass runs so every target is free and seed-reproducible.
+  provider: gemini
+  model: gemini-2.5-flash-lite
+  maxTokens: 200
+  temperature: 0.4
+  enabled: false
+
+observability:
+  otel:
+    enabled: true
+    exporter: file         # local JSONL only; no OTLP fan-out during mass runs
+    path: __FILLED_BY_HARNESS__   # <bugRoot>/${RUN_ID}/trace.jsonl
+  breadcrumbs:
+    enabled: true
+    path: __FILLED_BY_HARNESS__   # <bugRoot>/${RUN_ID}/breadcrumbs.jsonl
+
+triage:
+  bugRoot: __FILLED_BY_HARNESS__  # absolute per-target dir; bypasses PROJECT_ROOT
+  github:
+    enabled: false

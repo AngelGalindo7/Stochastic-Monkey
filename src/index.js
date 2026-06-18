@@ -2,6 +2,7 @@ import 'dotenv/config';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import seedrandom from 'seedrandom';
 
 import { loadConfig } from './config/loader.js';
@@ -30,7 +31,7 @@ import { checkBrokenImages } from './agent/oracles/structural.js';
 import { checkAuthzReplay } from './agent/oracles/authzReplay.js';
 import { sharedJarClient, isolatedClient } from './agent/apiClient.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname).replace(/^\//, ''), '..');
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs(argv) {
   const out = { configPath: 'config.yaml' };
@@ -80,6 +81,23 @@ async function executeAction({ action, page, config, rng, breadcrumbs, sentinel 
     default:
       return { success: false, error: `unknown action ${action.type}` };
   }
+}
+
+// Per-step watchdog. A single action can hang indefinitely — e.g. a CLICK that
+// triggers an off-domain navigation which destroys the execution context, after
+// which the next CDP/page call never resolves. Racing the step body against a
+// timeout lets the run abort the stuck step instead of hanging until an external
+// kill. The rejection is tagged so the loop can distinguish it from real errors.
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`watchdog: ${label} exceeded ${ms}ms`);
+      err.__watchdog = true;
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function pickMacro(macros, rng) {
@@ -230,6 +248,7 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
 
     const macroFireProb = config.macros?.fireProbability ?? 0;
     const macroList = config.macros?.list ?? [];
+    const stepTimeoutMs = config.run?.stepTimeoutMs ?? 10000;
     const recentStateIds = [];
     const noveltyDenylist = (config.novelty?.nameDenylist ?? []).map((s) => new RegExp(s, 'i'));
     let prevA11y = null;
@@ -286,7 +305,10 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
       let observedForPrev = null;
       let observedUrlForPrev = null;
 
-      await tracer.startActiveSpan(
+      let stepWatchdogFired = false;
+      try {
+        await withTimeout(
+          tracer.startActiveSpan(
         'mcts.expand',
         { attributes: { step, 'state.id': stateId, action: action.type, arm: role } },
         async (span) => {
@@ -363,7 +385,17 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           }
           span.end();
         },
-      );
+          ),
+          stepTimeoutMs,
+          `step ${step} (${action.type})`,
+        );
+      } catch (err) {
+        if (err && err.__watchdog) {
+          breadcrumbs.record('warn', `step ${step} watchdog fired: ${err.message}; ending run`);
+          break;
+        }
+        throw err;
+      }
 
       backprop(node, surpriseResult.score);
       prevA11y = observedForPrev ?? prevA11y;

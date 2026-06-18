@@ -1,0 +1,9 @@
+# Sample target list for harness/run-batch.js
+# One URL per line. Blank lines and #-comments are ignored.
+# A .jsonl file with {"url": "...", "platform": "...", "supabaseUrl": "..."} per
+# line also works and carries enrichment through to the generated config.
+
+https://the-internet.herokuapp.com/status_codes/500
+https://example.com
+# The line below is auto-skipped by the Stage 0 denylist (health keyword):
+https://my-health-clinic.example.com
