@@ -72,6 +72,24 @@ export function isPageErrorNoise(event) {
   return PAGEERROR_NOISE.some((re) => re.test(haystack));
 }
 
+// URL-like frame references in an Error.stack. Frame formats vary across engines
+// (V8 "at fn (url:line:col)" / "at url:line:col"; Firefox "fn@url:line:col") but a
+// scheme-prefixed substring is common to all. A trailing :line:col is parsed as part
+// of the URL path, so origin/hostname comparison still works without stripping it.
+const STACK_FRAME_URL_RE = /\b(?:https?|file|chrome-extension|moz-extension):\/\/[^\s)'"]+/gi;
+
+// Attribute an uncaught exception to the app under test via its stack frames. A throw
+// from a third-party SDK (Stripe.js, Intercom, an analytics script) should not auto-
+// assert a CRITICAL bug against the app — CONSOLE_ERROR already attributes origin, so
+// PAGEERROR must too. Mirrors isFirstPartyConsoleError's conservative default: when no
+// frame URL can be extracted (inline/anonymous script, minified throw with no stack)
+// the error is treated as first-party so genuine inline app crashes are never lost.
+export function isFirstPartyPageError(event, targetOrigin = '', allowedDomains = []) {
+  const frames = `${event?.stack ?? ''}`.match(STACK_FRAME_URL_RE);
+  if (!frames || frames.length === 0) return true;
+  return frames.some((url) => isFirstPartyUrl(url, { targetOrigin, allowedDomains }));
+}
+
 // Static sub-resources whose 4xx is a broken-asset bug (missing image, dead
 // stylesheet). Distinguished from API (xhr/fetch) 4xx, which is usually correct
 // rejection of bad input and must NOT auto-fire a bug.
@@ -99,7 +117,7 @@ export function pageEventsToHardSignals(events, targetOrigin = '', allowedDomain
   const isFirstParty = (url) => isFirstPartyUrl(url, { targetOrigin, allowedDomains });
   for (const e of events) {
     if (e.type === 'PAGEERROR') {
-      if (isPageErrorNoise(e)) {
+      if (isPageErrorNoise(e) || !isFirstPartyPageError(e, targetOrigin, allowedDomains)) {
         evidence.push({ signal: 'PAGEERROR_NOISE', detail: e.message });
       } else {
         out.push('PAGEERROR');
