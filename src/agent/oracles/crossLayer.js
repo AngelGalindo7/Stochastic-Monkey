@@ -25,6 +25,8 @@
 // Prior art: Schemathesis `use_after_free` (DELETE → GET gone) and
 // `ensure_resource_availability` (POST → GET exists).
 
+import { isFirstPartyUrl } from '../../perception/firstParty.js';
+
 const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 // 200, 201, 204 — mutation was accepted and committed.
@@ -58,18 +60,6 @@ function tryExtractCreatedId(body) {
   return null;
 }
 
-// Mirrors navigate.js: allowedDomains uses hostname suffix matching so that
-// localhost covers both localhost:5173 (UI) and localhost:8000 (API).
-function isAllowedDomain(url, allowedDomains) {
-  if (!allowedDomains || allowedDomains.length === 0) return true;
-  try {
-    const host = new URL(url).hostname;
-    return allowedDomains.some((d) => host === d || host.endsWith(`.${d}`));
-  } catch {
-    return false;
-  }
-}
-
 // Find the most recent committed mutation on an allowed domain.
 // Scans in reverse so the last write of a step is what we verify — multiple
 // mutations in one step (e.g. macro) are uncommon but the final one is the
@@ -79,7 +69,7 @@ function findMutation(captures, allowedDomains) {
     const c = captures[i];
     if (!MUTATION_METHODS.has(c.method)) continue;
     if (!COMMITTED_STATUSES.has(c.status)) continue;
-    if (!isAllowedDomain(c.url, allowedDomains)) continue;
+    if (!isFirstPartyUrl(c.url, { allowedDomains })) continue;
     return c;
   }
   return null;

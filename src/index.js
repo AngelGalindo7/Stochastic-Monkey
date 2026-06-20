@@ -364,7 +364,7 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
             ? clusterId(observed, config.mcts.abstractionGranularity)
             : null;
           const { signals: hardSignals, evidence: hardEvidence } =
-            pageEventsToHardSignals(newEvents, targetOrigin);
+            pageEventsToHardSignals(newEvents, targetOrigin, config.target.allowedDomains);
           hardEvidenceOuter = hardEvidence;
 
           // sharedJarClient needs page.context().request (Playwright only). On the

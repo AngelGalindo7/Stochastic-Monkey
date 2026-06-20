@@ -48,6 +48,7 @@ export function attachNetworkEvents(page) {
       type: 'REQUEST_FAILED',
       url: req.url(),
       reason: req.failure()?.errorText,
+      resourceType: req.resourceType?.(),
     }),
   );
   page.on('response', (res) => {
