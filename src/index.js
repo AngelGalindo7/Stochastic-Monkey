@@ -37,14 +37,28 @@ import { sharedJarClient, isolatedClient } from './agent/apiClient.js';
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs(argv) {
-  const out = { configPath: 'config.yaml' };
+  const out = { configPath: 'config.yaml', active: false };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--config' && argv[i + 1]) {
       out.configPath = argv[i + 1];
       i++;
+    } else if (argv[i] === '--active') {
+      out.active = true;
     }
   }
   return out;
+}
+
+// Zeroes all write-capable action weights and disables authz/crossLayer probes
+// so that the default `npm start` never submits forms or injects payloads into
+// an app the operator doesn't own. Applied in-memory only; config.yaml is untouched.
+function applyPassivePatch(config) {
+  config.actions.weights.INPUT = 0;
+  config.actions.weights.FORM_FILL = 0;
+  config.actions.weights.UPLOAD = 0;
+  if (config.macros) config.macros.fireProbability = 0;
+  if (config.oracle?.authzReplay) config.oracle.authzReplay.enabled = false;
+  if (config.oracle?.crossLayer) config.oracle.crossLayer.enabled = false;
 }
 
 function makeRunId(seed) {
@@ -532,6 +546,13 @@ async function main() {
   const runSentinel = 'mhk-' + crypto.createHash('sha1').update('sentinel:' + String(seed)).digest('hex').slice(0, 12);
 
   const config = loadConfig({ configPath: args.configPath, runId });
+
+  if (!args.active) {
+    applyPassivePatch(config);
+    process.stderr.write('[passive mode] Read-only scan. Run with --active to enable form submission and authz probes.\n');
+  } else {
+    process.stderr.write('[active mode] Form submission, payload injection, and authz replay enabled.\n');
+  }
 
   const tracer = initTelemetry({ runId, seed, otelConfig: config.observability?.otel });
 
