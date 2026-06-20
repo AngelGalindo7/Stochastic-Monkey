@@ -1,4 +1,5 @@
 import { CONSOLE_ERROR_DENYLIST, isFirstPartyConsoleError } from '../agent/signals.js';
+import { isFirstPartyUrl } from './firstParty.js';
 
 export { CONSOLE_ERROR_DENYLIST, isFirstPartyConsoleError };
 
@@ -69,9 +70,15 @@ const REVIEW_5XX = new Set([503, 504]);
 // auto-asserts the HTTP_500 hard signal; 503/504 are flagged for review (see
 // REVIEW_5XX). A 4xx is classified by the request it answered: navigation
 // (broken route) and assets are bugs, API validation 4xx is evidence only.
-export function pageEventsToHardSignals(events, targetOrigin = '') {
+//
+// allowedDomains gates which response/error URLs are attributable to the app under
+// test (isFirstPartyUrl): a third-party 500, asset 404, or uncaught throw must NOT
+// auto-assert a bug. An empty list falls back to exact targetOrigin equality, not
+// allow-all (see firstParty.js).
+export function pageEventsToHardSignals(events, targetOrigin = '', allowedDomains = []) {
   const out = [];
   const evidence = [];
+  const isFirstParty = (url) => isFirstPartyUrl(url, { targetOrigin, allowedDomains });
   for (const e of events) {
     if (e.type === 'PAGEERROR') {
       if (isPageErrorNoise(e)) {
@@ -81,7 +88,11 @@ export function pageEventsToHardSignals(events, targetOrigin = '') {
         evidence.push({ signal: 'PAGEERROR', detail: e.message });
       }
     } else if (e.type === 'HTTP_5XX') {
-      if (REVIEW_5XX.has(e.status)) {
+      if (!isFirstParty(e.url)) {
+        // Third-party 5xx (payment sandbox, search widget, analytics) is not a fault
+        // in the app under test — evidence only, never auto-assert.
+        evidence.push({ signal: 'THIRD_PARTY_5XX', detail: `${e.status} ${e.url}` });
+      } else if (REVIEW_5XX.has(e.status)) {
         // 503/504: credible but ambiguous — flag for review, never auto-assert (cf. API_4XX).
         out.push('HTTP_503_504');
         evidence.push({ signal: 'HTTP_503_504', detail: `${e.status} ${e.url}` });
