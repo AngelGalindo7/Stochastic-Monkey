@@ -51,11 +51,28 @@ describe('httpSignals.pageEventsToHardSignals — HTTP-code-driven oracle', () =
     expect(signals).toContain('ASSET_4XX');
   });
 
-  it('a genuine hard failure (connection refused) is a bug', () => {
-    const { signals } = pageEventsToHardSignals([
+  it('a transient connection-refused failure is NOT a bug — evidence only (will not reproduce)', () => {
+    const { signals, evidence } = pageEventsToHardSignals([
       { type: 'REQUEST_FAILED', url: 'http://app/api/data', reason: 'net::ERR_CONNECTION_REFUSED' },
     ]);
-    expect(signals).toContain('ASSET_4XX');
+    expect(signals).toHaveLength(0);
+    expect(evidence.some((e) => e.signal === 'REQUEST_FAILED_TRANSIENT')).toBe(true);
+  });
+
+  it('a transient timeout (ERR_TIMED_OUT) is NOT a bug — evidence only', () => {
+    const { signals, evidence } = pageEventsToHardSignals([
+      { type: 'REQUEST_FAILED', url: 'http://app/api/data', reason: 'net::ERR_TIMED_OUT' },
+    ]);
+    expect(signals).toHaveLength(0);
+    expect(evidence.some((e) => e.signal === 'REQUEST_FAILED_TRANSIENT')).toBe(true);
+  });
+
+  it('a DNS resolution failure (ERR_NAME_NOT_RESOLVED) is NOT a bug — evidence only', () => {
+    const { signals, evidence } = pageEventsToHardSignals([
+      { type: 'REQUEST_FAILED', url: 'http://app/api/data', reason: 'net::ERR_NAME_NOT_RESOLVED' },
+    ]);
+    expect(signals).toHaveLength(0);
+    expect(evidence.some((e) => e.signal === 'REQUEST_FAILED_TRANSIENT')).toBe(true);
   });
 
   it('an aborted request (SPA navigation cancel) is NOT a bug — evidence only', () => {
@@ -154,6 +171,148 @@ describe('httpSignals.pageEventsToHardSignals — HTTP-code-driven oracle', () =
         expect(evidence.some((e) => e.signal === 'HTTP_503_504'), ctx).toBe(true);
       }
     }
+  });
+});
+
+describe('httpSignals — first-party attribution gates', () => {
+  const origin = 'http://app';
+
+  // FIX 1: HTTP_500 must not auto-assert on a third-party API fault.
+  it('a third-party 500 does NOT auto-assert HTTP_500 (evidence only)', () => {
+    const { signals, evidence } = pageEventsToHardSignals(
+      [{ type: 'HTTP_5XX', url: 'https://api.stripe.com/v1/charges', status: 500, resourceType: 'fetch' }],
+      origin,
+    );
+    expect(signals).not.toContain('HTTP_500');
+    expect(signals).toHaveLength(0);
+    expect(evidence.some((e) => e.signal === 'THIRD_PARTY_5XX')).toBe(true);
+  });
+
+  it('a first-party 500 still auto-asserts HTTP_500 (the gold signal)', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'HTTP_5XX', url: 'http://app/api/orders', status: 500, resourceType: 'fetch' }],
+      origin,
+    );
+    expect(signals).toContain('HTTP_500');
+  });
+
+  it('a first-party 503 still flags HTTP_503_504; a third-party 503 does not', () => {
+    const { signals: first } = pageEventsToHardSignals(
+      [{ type: 'HTTP_5XX', url: 'http://app/api/orders', status: 503, resourceType: 'fetch' }],
+      origin,
+    );
+    expect(first).toContain('HTTP_503_504');
+
+    const { signals: third } = pageEventsToHardSignals(
+      [{ type: 'HTTP_5XX', url: 'https://search.algolia.net/q', status: 503, resourceType: 'fetch' }],
+      origin,
+    );
+    expect(third).toHaveLength(0);
+  });
+
+  it('allowedDomains suffix-matches a first-party API on a sibling host', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'HTTP_5XX', url: 'http://api.example.com/orders', status: 500, resourceType: 'fetch' }],
+      'http://www.example.com',
+      ['example.com'],
+    );
+    expect(signals).toContain('HTTP_500');
+  });
+
+  it('empty allowedDomains falls back to exact targetOrigin — does NOT allow-all', () => {
+    // targetOrigin set, list empty: a same-host 500 fires, a third-party 500 does not.
+    const { signals: same } = pageEventsToHardSignals(
+      [{ type: 'HTTP_5XX', url: 'http://app/api/x', status: 500, resourceType: 'fetch' }],
+      origin,
+      [],
+    );
+    expect(same).toContain('HTTP_500');
+
+    const { signals: other } = pageEventsToHardSignals(
+      [{ type: 'HTTP_5XX', url: 'http://evil.test/api/x', status: 500, resourceType: 'fetch' }],
+      origin,
+      [],
+    );
+    expect(other).toHaveLength(0);
+  });
+
+  // FIX 2: ASSET_4XX must not auto-assert on a third-party CDN asset.
+  it('a third-party asset 404 does NOT auto-assert ASSET_4XX', () => {
+    const { signals, evidence } = pageEventsToHardSignals(
+      [{ type: 'HTTP_4XX', url: 'https://cdn.fonts.net/inter.woff2', status: 404, resourceType: 'font' }],
+      origin,
+    );
+    expect(signals).not.toContain('ASSET_4XX');
+    expect(evidence.some((e) => e.signal === 'THIRD_PARTY_ASSET_4XX')).toBe(true);
+  });
+
+  it('a first-party asset 404 still auto-asserts ASSET_4XX', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'HTTP_4XX', url: 'http://app/logo.png', status: 404, resourceType: 'image' }],
+      origin,
+    );
+    expect(signals).toContain('ASSET_4XX');
+  });
+
+  it('a failed first-party asset request (image) auto-asserts ASSET_4XX', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'REQUEST_FAILED', url: 'http://app/hero.png', reason: 'net::ERR_FAILED', resourceType: 'image' }],
+      origin,
+    );
+    expect(signals).toContain('ASSET_4XX');
+  });
+
+  it('a failed API (fetch) request does NOT fire under the ASSET label', () => {
+    const { signals, evidence } = pageEventsToHardSignals(
+      [{ type: 'REQUEST_FAILED', url: 'http://app/api/data', reason: 'net::ERR_FAILED', resourceType: 'fetch' }],
+      origin,
+    );
+    expect(signals).not.toContain('ASSET_4XX');
+    expect(evidence.some((e) => e.signal === 'API_REQUEST_FAILED')).toBe(true);
+  });
+
+  it('a failed third-party asset request does NOT auto-assert ASSET_4XX', () => {
+    const { signals, evidence } = pageEventsToHardSignals(
+      [{ type: 'REQUEST_FAILED', url: 'https://cdn.other.net/x.png', reason: 'net::ERR_FAILED', resourceType: 'image' }],
+      origin,
+    );
+    expect(signals).not.toContain('ASSET_4XX');
+    expect(evidence.some((e) => e.signal === 'THIRD_PARTY_REQUEST_FAILED')).toBe(true);
+  });
+
+  // FIX 3: PAGEERROR must attribute the throw to a first-party frame.
+  it('a pageerror with only third-party stack frames is NOT asserted (evidence only)', () => {
+    const { signals, evidence } = pageEventsToHardSignals(
+      [{ type: 'PAGEERROR', message: 'TypeError in vendor', stack: 'at https://js.stripe.com/v3/stripe.js:1:2000' }],
+      origin,
+    );
+    expect(signals).toHaveLength(0);
+    expect(evidence.some((e) => e.signal === 'PAGEERROR_NOISE')).toBe(true);
+  });
+
+  it('a pageerror with a first-party stack frame is asserted', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'PAGEERROR', message: 'TypeError', stack: 'at handler (http://app/assets/main.js:42:7)' }],
+      origin,
+    );
+    expect(signals).toContain('PAGEERROR');
+  });
+
+  it('a pageerror with a mix of third-party and first-party frames is asserted', () => {
+    const stack = 'at https://js.stripe.com/v3/stripe.js:1:1\n    at http://app/main.js:10:5';
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'PAGEERROR', message: 'boom', stack }],
+      origin,
+    );
+    expect(signals).toContain('PAGEERROR');
+  });
+
+  it('an inline/anonymous pageerror (no extractable URL) is treated as first-party and asserted', () => {
+    const { signals } = pageEventsToHardSignals(
+      [{ type: 'PAGEERROR', message: 'ReferenceError: foo is not defined' }],
+      origin,
+    );
+    expect(signals).toContain('PAGEERROR');
   });
 });
 
