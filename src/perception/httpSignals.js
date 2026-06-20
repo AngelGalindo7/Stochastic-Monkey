@@ -39,6 +39,24 @@ export function isBenignFailure(reason) {
   return BENIGN_FAILURE_REASONS.some((r) => reason.includes(r));
 }
 
+// Transient environmental failures — DNS resolution, connection refusal, socket
+// timeouts. Unlike a genuine broken-resource bug these are non-deterministic: they
+// depend on network conditions at crawl time and will not reproduce in deterministic
+// replay. Auto-asserting them fills BUG/ with non-reproducible noise, so they are
+// recorded as evidence only (same treatment as BENIGN_FAILURE_REASONS).
+const TRANSIENT_FAILURE_REASONS = [
+  'ERR_TIMED_OUT',
+  'ERR_CONNECTION_TIMED_OUT',
+  'ERR_CONNECTION_REFUSED',
+  'ERR_NAME_NOT_RESOLVED',
+  'ERR_ADDRESS_UNREACHABLE',
+];
+
+export function isTransientFailure(reason) {
+  if (!reason) return false;
+  return TRANSIENT_FAILURE_REASONS.some((r) => reason.includes(r));
+}
+
 // Uncaught exceptions that originate outside the app under test (browser extensions)
 // or are benign browser-internal throws (ResizeObserver loop notifications). The
 // PAGEERROR channel has no origin filter (unlike CONSOLE_ERROR), so screen these out
@@ -105,8 +123,13 @@ export function pageEventsToHardSignals(events, targetOrigin = '', allowedDomain
         out.push('HTTP_4XX_NAV');
         evidence.push({ signal: 'HTTP_4XX_NAV', detail: `${e.status} ${e.url}` });
       } else if (ASSET_RESOURCE_TYPES.has(e.resourceType)) {
-        out.push('ASSET_4XX');
-        evidence.push({ signal: 'ASSET_4XX', detail: `${e.status} ${e.url}` });
+        if (isFirstParty(e.url)) {
+          out.push('ASSET_4XX');
+          evidence.push({ signal: 'ASSET_4XX', detail: `${e.status} ${e.url}` });
+        } else {
+          // Third-party asset 404 (CDN font, vendor script) — not the app's defect.
+          evidence.push({ signal: 'THIRD_PARTY_ASSET_4XX', detail: `${e.status} ${e.url}` });
+        }
       } else {
         // API (xhr/fetch/other) 4xx: evidence for later deduction, not a bug.
         evidence.push({ signal: 'API_4XX', detail: `${e.status} ${e.url}` });
@@ -114,6 +137,15 @@ export function pageEventsToHardSignals(events, targetOrigin = '', allowedDomain
     } else if (e.type === 'REQUEST_FAILED' && !isNoiseUrl(e.url)) {
       if (isBenignFailure(e.reason)) {
         evidence.push({ signal: 'REQUEST_FAILED_BENIGN', detail: `${e.reason} ${e.url}` });
+      } else if (isTransientFailure(e.reason)) {
+        evidence.push({ signal: 'REQUEST_FAILED_TRANSIENT', detail: `${e.reason} ${e.url}` });
+      } else if (e.resourceType && !ASSET_RESOURCE_TYPES.has(e.resourceType)) {
+        // Failed API (xhr/fetch) request — not a broken asset; evidence for deduction,
+        // not an ASSET_4XX. (Events without a resourceType fall through to the gate
+        // below so legacy callers still surface genuine asset failures.)
+        evidence.push({ signal: 'API_REQUEST_FAILED', detail: `${e.reason} ${e.url}` });
+      } else if (!isFirstParty(e.url)) {
+        evidence.push({ signal: 'THIRD_PARTY_REQUEST_FAILED', detail: `${e.reason} ${e.url}` });
       } else {
         out.push('ASSET_4XX');
         evidence.push({ signal: 'REQUEST_FAILED', detail: `fail ${e.url}` });
