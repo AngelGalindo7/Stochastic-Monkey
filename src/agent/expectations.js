@@ -51,20 +51,23 @@ export const HARD_SIGNALS = {
   // lowercasing, timestamps — can legitimately alter string representations.
   STATE_WRONG_VALUE: { score: 0.6, severity: 'medium', tier: 'flag-for-review' },
 
-  // Authorization-replay verdicts, emitted by the future replay oracle (the
-  // recorder/replayer/orchestrator wiring lands separately). Split across the two
-  // tiers because authz replay is heuristic: Autorize's own docs warn its
+  // Authorization-replay verdicts, emitted by the post-run authz oracle. Both are
+  // flag-for-review because authz replay is heuristic: Autorize's own docs warn its
   // response-comparison fingerprints yield both false positives and false negatives,
-  // so it cannot share the auto-assert tier wholesale (adversarial finding A1/A3).
-  //   CROSS_ACCOUNT_LEAK is auto-assert ONLY because the oracle fires it solely when
-  //   role B's 200 still carries role A's owned sensitive fields after field-level
-  //   body scrubbing — an unambiguous data diff, not a status-only guess.
+  // so it cannot share the auto-assert tier (adversarial finding A1/A3).
+  //   CROSS_ACCOUNT_LEAK is flag-for-review for two reasons. (1) Wiring: the check runs
+  //   in main() outside runArm and routes its result through writeFlaggedReport
+  //   (FLAGGED/) unconditionally — it never reaches scoreState / writeBugReport, so any
+  //   auto-assert tier here is dead metadata. (2) Contract: even a sentinel-grounded
+  //   leak can be a false positive — if the monkey filled an intentionally-public form
+  //   (a public comment/review), an anon read returning that data is correct behaviour.
+  //   A human confirms whether the leaked record was meant to be private.
   //   AUTHZ_UNCERTAIN is the flag-for-review bucket for every ambiguous case the spec
   //   enumerates (signed / capability-URL routing, un-refreshable per-request nonce, a
   //   CSRF refresh that could explain the 200, infra 403/429 vs authz 403). Its score
   //   sits below every auto-assert signal so a co-firing real signal always wins
   //   selection, and it never auto-generates a test.
-  CROSS_ACCOUNT_LEAK: { score: 1.0, severity: 'critical', tier: 'auto-assert' },
+  CROSS_ACCOUNT_LEAK: { score: 1.0, severity: 'critical', tier: 'flag-for-review' },
   AUTHZ_UNCERTAIN: { score: 0.5, severity: 'low', tier: 'flag-for-review' },
 
   // Passive one-shot security checks (DECISION_LOG 018). All flag-for-review:
