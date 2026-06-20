@@ -18,6 +18,8 @@
 // anon replay returns the SAME owned record id(s) the authenticated arm saw — not just
 // "anon got a 200". An empty/filtered/different body reads as correctly enforced.
 
+import { isFirstPartyUrl } from '../../perception/firstParty.js';
+
 const READ_METHODS = new Set(['GET']);
 const is2xx = (s) => s >= 200 && s < 300;
 
@@ -35,17 +37,6 @@ function isCapabilityUrl(url) {
   }
 }
 
-// Hostname-suffix match, same convention as crossLayer.js / navigate.js so a
-// first-party API on a sibling host/port (localhost:8000, <project>.supabase.co) counts.
-function isAllowedDomain(url, allowedDomains) {
-  if (!allowedDomains || allowedDomains.length === 0) return true;
-  try {
-    const host = new URL(url).hostname;
-    return allowedDomains.some((d) => host === d || host.endsWith(`.${d}`));
-  } catch {
-    return false;
-  }
-}
 
 // Collect id/uuid-like values from a response body (bounded depth/width) so the
 // replay body can be checked for the SAME owned record the authed arm saw.
@@ -142,7 +133,7 @@ export async function checkAuthzReplay({ reads = [], replay, allowedDomains = []
   for (const c of reads) {
     if (!READ_METHODS.has(c.method)) continue;        // reads only
     if (!is2xx(c.status)) continue;                   // the user successfully read it
-    if (!isAllowedDomain(c.url, allowedDomains)) continue;
+    if (!isFirstPartyUrl(c.url, { allowedDomains })) continue;
     if (!hasUserToken(c.requestHeaders)) continue;    // can't strip a credential we don't see
     if (isCapabilityUrl(c.url)) continue;             // auth is in the URL — by design
     if (allow.some((re) => re.test(c.url))) continue; // intentionally public
