@@ -1,0 +1,125 @@
+# Lovable / Bolt / v0 — Supabase + React SPA template.
+# Copy to config.yaml, set target.url, then run:
+#
+#   npm start            # passive scan first (read-only, safe)
+#   npm start --active   # active scan — only against YOUR app
+#
+# See README.md → "Scanning a Lovable / Supabase app" for the full guide.
+
+browser:
+  engine: playwright       # React SPAs need real JS execution + networkidle
+
+target:
+  url: https://YOUR-APP.lovable.app   # ← change this
+  allowedDomains: []       # empty = only the exact target origin is first-party
+  blockedSelectors:
+    - "a[href$='/logout']"
+    - "a[href*='/delete']"
+    - "a[href*='/signout']"
+    - "form[action*='delete']"
+    - "[data-destructive='true']"
+
+# No auth block — this template scans as an anonymous visitor.
+# To scan authenticated routes, uncomment and fill in:
+#
+# auth:
+#   roles:
+#     user: {}
+#     anon: null
+#   login:
+#     url: https://YOUR-APP.lovable.app/api/auth/login
+#     email: testuser@example.com
+#     password: yourpassword
+
+run:
+  seed: 42
+  maxSteps: 40             # deeper than a mass scan; enough for a meaningful SPA tour
+  humanDelayMs: 300        # realistic pacing — lets SPA hydration complete before snapshotting
+  stopOnFirstBug: false    # survey the whole app; collect every signal in one run
+
+actions:
+  weights:
+    CLICK: 0.50
+    # FORM_FILL, INPUT, UPLOAD only activate with --active.
+    FORM_FILL: 0.25
+    INPUT: 0.15
+    UPLOAD: 0.05
+    NAVIGATION: 0.10
+    SCROLL: 0.05
+    BACK: 0.05
+    FORWARD: 0.03
+    REFRESH: 0.05
+  filesPool: []
+  dataPool:
+    - test_user
+    - "user@example.com"
+    - "12345"
+    - "<script>alert(1)</script>"
+    - "' OR 1=1 --"
+
+macros:
+  fireProbability: 0.10
+  list:
+    - name: refresh_loop
+      weight: 1
+      steps:
+        - { type: REFRESH }
+        - { type: SCROLL }
+        - { type: REFRESH }
+    - name: back_then_refresh
+      weight: 1
+      steps:
+        - { type: BACK }
+        - { type: REFRESH }
+        - { type: FORWARD }
+
+mcts:
+  ucbC: 1.4
+  rolloutDepth: 1
+  abstractionGranularity: medium
+
+novelty:
+  nameDenylist:
+    - "unread( messages)?"
+    - "online now"
+    - "loading\\.\\.\\."
+    - "skeleton"
+    - "\\d+ (item|result|record)s?"  # live count banners churn on every render
+
+llm:
+  provider: gemini
+  model: gemini-2.5-flash-lite
+  maxTokens: 200
+  temperature: 0.4
+  enabled: false             # disable LLM for cost-free anonymous scans
+
+observability:
+  otel:
+    enabled: true
+    exporter: file
+    path: BUG/${RUN_ID}/trace.jsonl
+  breadcrumbs:
+    enabled: true
+    path: BUG/${RUN_ID}/breadcrumbs.jsonl
+
+oracle:
+  # Cross-layer: verifies that deletes and creates are reflected in the next GET.
+  # Uses PostgREST-compatible polling (/rest/v1/<table>?id=eq.<id>) for Supabase.
+  crossLayer:
+    enabled: true
+    pollAttempts: 3
+    pollDelayMs: 500
+    goneStatuses: [404, 410]
+    softDelete: false
+  # Authz replay: after the crawl, replays authenticated reads as anonymous and
+  # flags any owned record that comes back — the RLS misconfiguration / BOLA vector.
+  # This is the #1 bug class in Lovable/Supabase apps.
+  authzReplay:
+    enabled: true
+    maxReplays: 8
+    publicAllowlist: []
+
+triage:
+  bugRoot: BUG
+  github:
+    enabled: false
