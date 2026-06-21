@@ -33,6 +33,7 @@ import { checkSecurityHeaders } from './agent/oracles/securityHeaders.js';
 import { checkCookieSecurity } from './agent/oracles/cookieSecurity.js';
 import { checkInfoDisclosure } from './agent/oracles/infoDisclosure.js';
 import { sharedJarClient, isolatedClient } from './agent/apiClient.js';
+import { writeSummaryReport } from './triage/summaryReport.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -142,12 +143,14 @@ function pickMacro(macros, rng) {
 }
 
 // Runs one crawl arm (authenticated or anon) to completion.
-// Returns { firstBug, firstFlagged, fatalError }. Closes breadcrumbs; caller closes browser.
+// Returns { firstBug, firstFlagged, fatalError, bugs, flagged }. Closes breadcrumbs; caller closes browser.
 async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, stepsDir, targetOrigin, sentinel }) {
   const engine = config.browser?.engine ?? 'playwright';
   let firstBug = null;
   let firstFlagged = null;
   let fatalError = null;
+  const bugs = [];
+  const flagged = [];
 
   try {
     if (role !== 'anon') {
@@ -293,6 +296,7 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           config,
         });
         if (!firstFlagged) firstFlagged = ckFlagged;
+        flagged.push({ folderRel: ckFlagged.folderRel, signal: ckResult.signal, severity: HARD_SIGNALS.INSECURE_COOKIES.severity, pageUrl: config.target.url });
         breadcrumbs.record('flag.write', `cookies: ${ckFlagged.folderRel}`);
       }
     }
@@ -466,12 +470,13 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           .screenshot({ fullPage: true, type: 'png' })
           .catch(() => null);
         const domHtml = await page.raw.content().catch(() => '');
-        firstBug = await writeBugReport({
+        const bugSignal = surpriseResult.signalType ?? surpriseResult.reason ?? 'unknown_signal';
+        const bugResult = await writeBugReport({
           rootDir: PROJECT_ROOT,
           bugRoot: config.triage?.bugRoot ?? 'BUG',
           seed,
           severity: surpriseResult.severity,
-          signal: surpriseResult.signalType ?? surpriseResult.reason ?? 'unknown_signal',
+          signal: bugSignal,
           pageUrl: currentUrl,
           breadcrumbs: breadcrumbs.all(),
           screenshotBuffer,
@@ -482,7 +487,9 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           stepsDirRel: path.relative(PROJECT_ROOT, stepsDir),
           config,
         });
-        breadcrumbs.record('bug.write', `wrote ${firstBug.folderRel}`);
+        if (!firstBug) firstBug = bugResult;
+        bugs.push({ folderRel: bugResult.folderRel, signal: bugSignal, severity: surpriseResult.severity, pageUrl: currentUrl });
+        breadcrumbs.record('bug.write', `wrote ${bugResult.folderRel}`);
         if (config.run.stopOnFirstBug) break;
       } else if (surpriseResult.isBug && isNoiseLocation) {
         breadcrumbs.record(
@@ -494,12 +501,13 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           .screenshot({ fullPage: true, type: 'png' })
           .catch(() => null);
         const domHtml = await page.raw.content().catch(() => '');
+        const flagSignal = surpriseResult.signalType ?? surpriseResult.reason ?? 'unknown_signal';
         const flaggedResult = await writeFlaggedReport({
           rootDir: PROJECT_ROOT,
           bugRoot: config.triage?.flaggedRoot ?? 'FLAGGED',
           seed,
           severity: surpriseResult.severity,
-          signal: surpriseResult.signalType ?? surpriseResult.reason ?? 'unknown_signal',
+          signal: flagSignal,
           reason: surpriseResult.reason ?? '',
           pageUrl: currentUrl,
           breadcrumbs: breadcrumbs.all(),
@@ -512,6 +520,7 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           config,
         });
         if (!firstFlagged) firstFlagged = flaggedResult;
+        flagged.push({ folderRel: flaggedResult.folderRel, signal: flagSignal, severity: surpriseResult.severity, pageUrl: currentUrl });
         breadcrumbs.record('flag.write', `wrote ${flaggedResult.folderRel}`);
       }
     }
@@ -519,16 +528,20 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
     breadcrumbs.record('error', err.message, { stack: err.stack });
     const tookActions = breadcrumbs.all().some((b) => b.type === 'action');
     if (!firstBug && tookActions) {
-      firstBug = await writeBugReport({
+      const crashSignal = `agent_crash: ${err.message}`;
+      const crashUrl = page?.raw?.url?.() ?? config.target.url;
+      const crashBug = await writeBugReport({
         rootDir: PROJECT_ROOT,
         bugRoot: config.triage?.bugRoot ?? 'BUG',
         seed,
         severity: 'high',
-        signal: `agent_crash: ${err.message}`,
-        pageUrl: page?.raw?.url?.() ?? config.target.url,
+        signal: crashSignal,
+        pageUrl: crashUrl,
         breadcrumbs: breadcrumbs.all(),
         config,
       });
+      firstBug = crashBug;
+      bugs.push({ folderRel: crashBug.folderRel, signal: crashSignal, severity: 'high', pageUrl: crashUrl });
     } else if (!firstBug) {
       // No bug AND no action taken — the run aborted inside the harness itself
       // (perception/auth threw on step 0). That is a broken run, not a clean
@@ -543,10 +556,11 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
     await breadcrumbs.close();
   }
 
-  return { firstBug, firstFlagged, fatalError };
+  return { firstBug, firstFlagged, fatalError, bugs, flagged };
 }
 
 async function main() {
+  const startMs = Date.now();
   const args = parseArgs(process.argv);
   const seedSource = process.env.HEURISTIC_SEED ?? null;
 
@@ -593,6 +607,8 @@ async function main() {
   let combinedFirstFlagged = null;
   let combinedFatalError = null;
   let userCaptures = null;
+  const allBugs = [];
+  const allFlagged = [];
 
   try {
     // One-shot security-header probe (DECISION_LOG 018). Runs before any arm so
@@ -612,6 +628,7 @@ async function main() {
         config,
       });
       if (!combinedFirstFlagged) combinedFirstFlagged = shFlagged;
+      allFlagged.push({ folderRel: shFlagged.folderRel, signal: shResult.signal, severity: HARD_SIGNALS.MISSING_SECURITY_HEADERS.severity, pageUrl: config.target.url });
       console.log(`\nFLAGGED (security headers): ${shFlagged.folderRel}`);
     }
 
@@ -646,7 +663,7 @@ async function main() {
       breadcrumbs.record('run.start', `run ${runId} arm=${role} seed=${seed} target=${config.target.url}`);
       console.log(`\n[run] arm=${role} seed=${seed}`);
 
-      const { firstBug, firstFlagged, fatalError } = await runArm({
+      const { firstBug, firstFlagged, fatalError, bugs: armBugs, flagged: armFlagged } = await runArm({
         role,
         page,
         seed,
@@ -663,6 +680,8 @@ async function main() {
       if (firstFlagged && !combinedFirstFlagged) combinedFirstFlagged = firstFlagged;
       if (fatalError && !combinedFatalError) combinedFatalError = fatalError;
       if (role === 'user') userCaptures = page.captures ?? null;
+      allBugs.push(...armBugs);
+      allFlagged.push(...armFlagged);
     }
 
     // Anonymous read-replay (authz / RLS) check. Replays what the authenticated user
@@ -681,11 +700,12 @@ async function main() {
             sentinel: runSentinel,
           });
           if (az.signal) {
+            const azSeverity = HARD_SIGNALS[az.signal]?.severity ?? 'low';
             const flagged = await writeFlaggedReport({
               rootDir: PROJECT_ROOT,
               bugRoot: config.triage?.flaggedRoot ?? 'FLAGGED',
               seed,
-              severity: HARD_SIGNALS[az.signal]?.severity ?? 'low',
+              severity: azSeverity,
               signal: az.signal,
               reason: az.reason ?? '',
               pageUrl: config.target.url,
@@ -694,6 +714,7 @@ async function main() {
               config,
             });
             if (!combinedFirstFlagged) combinedFirstFlagged = flagged;
+            allFlagged.push({ folderRel: flagged.folderRel, signal: az.signal, severity: azSeverity, pageUrl: config.target.url });
             console.log(`\nFLAGGED (authz): ${flagged.folderRel}`);
           }
         } finally {
@@ -707,6 +728,18 @@ async function main() {
     await browser.close().catch(() => {});
     await shutdownTelemetry();
   }
+
+  const summaryPath = writeSummaryReport({
+    rootDir: PROJECT_ROOT,
+    runId,
+    seed,
+    targetUrl: config.target.url,
+    mode: args.active ? 'active' : 'passive',
+    bugs: allBugs,
+    flagged: allFlagged,
+    durationMs: Date.now() - startMs,
+  });
+  console.log(`\nSUMMARY: ${summaryPath}`);
 
   if (combinedFirstBug) {
     console.log(`\nBUG: ${combinedFirstBug.folderRel}`);
