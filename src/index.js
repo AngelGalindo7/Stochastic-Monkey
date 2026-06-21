@@ -49,16 +49,26 @@ function parseArgs(argv) {
   return out;
 }
 
-// Zeroes all write-capable action weights and disables authz/crossLayer probes
-// so that the default `npm start` never submits forms or injects payloads into
-// an app the operator doesn't own. Applied in-memory only; config.yaml is untouched.
 function applyPassivePatch(config) {
   config.actions.weights.INPUT = 0;
   config.actions.weights.FORM_FILL = 0;
   config.actions.weights.UPLOAD = 0;
+
+  // First layer: macros never fire.
   if (config.macros) config.macros.fireProbability = 0;
-  if (config.oracle?.authzReplay) config.oracle.authzReplay.enabled = false;
-  if (config.oracle?.crossLayer) config.oracle.crossLayer.enabled = false;
+
+  // Second layer: strip write-capable steps from every macro so they cannot
+  // execute even if a macro is dispatched through a future direct call path.
+  const PASSIVE_BLOCKED = new Set(['INPUT', 'UPLOAD', 'FORM_FILL']);
+  for (const macro of config.macros?.list ?? []) {
+    macro.steps = macro.steps.filter((s) => !PASSIVE_BLOCKED.has(s.type));
+  }
+
+  // Upsert oracle blocks unconditionally — a conditional write silently skips
+  // when the key is absent from config.yaml, leaving the oracle enabled.
+  config.oracle ??= {};
+  config.oracle.authzReplay = { ...(config.oracle.authzReplay ?? {}), enabled: false };
+  config.oracle.crossLayer  = { ...(config.oracle.crossLayer  ?? {}), enabled: false };
 }
 
 function makeRunId(seed) {
