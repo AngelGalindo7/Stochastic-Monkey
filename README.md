@@ -11,6 +11,7 @@ npm install                # downloads Chromium for Puppeteer
 cp .env.example .env       # add OPENAI_API_KEY (optional)
 npm test                   # vitest — should be green
 npm start                  # runs config.yaml against the default target
+npm start -- --url https://myapp.lovable.app   # override target URL without editing config.yaml
 ```
 
 ## Running Modes
