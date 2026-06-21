@@ -32,6 +32,7 @@ import { checkAuthzReplay } from './agent/oracles/authzReplay.js';
 import { checkSecurityHeaders } from './agent/oracles/securityHeaders.js';
 import { checkCookieSecurity } from './agent/oracles/cookieSecurity.js';
 import { checkInfoDisclosure } from './agent/oracles/infoDisclosure.js';
+import { checkBundleSecrets } from './agent/oracles/bundleSecrets.js';
 import { sharedJarClient, isolatedClient } from './agent/apiClient.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -292,6 +293,25 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
         if (!firstFlagged) firstFlagged = ckFlagged;
         breadcrumbs.record('flag.write', `cookies: ${ckFlagged.folderRel}`);
       }
+    }
+
+    // One-shot bundle-secret scan — read-only, runs in both passive and active mode.
+    const bsResult = await checkBundleSecrets(page.raw, targetOrigin);
+    if (bsResult.signal) {
+      const bsFlagged = await writeFlaggedReport({
+        rootDir: PROJECT_ROOT,
+        bugRoot: config.triage?.flaggedRoot ?? 'FLAGGED',
+        seed,
+        severity: bsResult.severity,
+        signal: bsResult.signal,
+        reason: bsResult.detail ?? '',
+        pageUrl: config.target.url,
+        breadcrumbs: breadcrumbs.all(),
+        evidence: [{ signal: bsResult.signal, detail: bsResult.detail }],
+        config,
+      });
+      if (!firstFlagged) firstFlagged = bsFlagged;
+      breadcrumbs.record('flag.write', `bundle-secrets: ${bsFlagged.folderRel}`);
     }
 
     const macroFireProb = config.macros?.fireProbability ?? 0;
