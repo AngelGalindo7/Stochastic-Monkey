@@ -24,6 +24,17 @@ npm start --active   # active  — enables form submission, payload injection, a
 
 **Active mode (`--active`):** enables `FORM_FILL`, `INPUT`, `UPLOAD`, and authz-replay probes. Only use against apps you own or have written permission to test.
 
+## Scanning a Lovable / Supabase app
+
+```bash
+cp harness/lovable.config.template.yaml config.yaml
+# Edit target.url in config.yaml to point at your app
+npm start            # passive scan first — read-only, safe
+npm start --active   # active scan — only run against YOUR app
+```
+
+The template pre-enables `oracle.authzReplay` and `oracle.crossLayer`, which catch the most common Supabase bug class: misconfigured Row Level Security that leaks data to anonymous users. It also sets `browser.engine: playwright` (required for React SPA hydration) and `run.humanDelayMs: 300` to let the SPA fully render before each snapshot.
+
 ## Bug Artifacts
 
 Failures land in `BUG/<iso8601>__seed<n>__<severity>/`:
