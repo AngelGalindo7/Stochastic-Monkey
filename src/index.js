@@ -37,13 +37,16 @@ import { sharedJarClient, isolatedClient } from './agent/apiClient.js';
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs(argv) {
-  const out = { configPath: 'config.yaml', active: false };
+  const out = { configPath: 'config.yaml', active: false, url: null };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--config' && argv[i + 1]) {
       out.configPath = argv[i + 1];
       i++;
     } else if (argv[i] === '--active') {
       out.active = true;
+    } else if (argv[i] === '--url' && argv[i + 1]) {
+      out.url = argv[i + 1];
+      i++;
     }
   }
   return out;
@@ -557,11 +560,13 @@ async function main() {
 
   const config = loadConfig({ configPath: args.configPath, runId });
 
+  if (!args.active) applyPassivePatch(config);
+  if (args.url) config.target.url = args.url;
+
   if (!args.active) {
-    applyPassivePatch(config);
-    process.stderr.write('[passive mode] Read-only scan. Run with --active to enable form submission and authz probes.\n');
+    process.stderr.write(`[passive mode] Read-only scan of ${config.target.url} — run with --active to enable writes.\n`);
   } else {
-    process.stderr.write('[active mode] Form submission, payload injection, and authz replay enabled.\n');
+    process.stderr.write(`[active mode] Scanning ${config.target.url} — form submission, payload injection, and authz replay enabled.\n`);
   }
 
   const tracer = initTelemetry({ runId, seed, otelConfig: config.observability?.otel });
