@@ -39,35 +39,30 @@ describe('runScroll — success', () => {
 describe('runScroll — dy calculation', () => {
   it('computes a positive dy (scroll down) when rng() > 0.3', async () => {
     const page = makePage();
-    // rng() = 0.5 → (0.5 - 0.3) * 1200 = 240
     const r = await runScroll({ page, rng: () => 0.5 });
     expect(r.dy).toBe(240);
   });
 
   it('computes a negative dy (scroll up) when rng() < 0.3', async () => {
     const page = makePage();
-    // rng() = 0.1 → (0.1 - 0.3) * 1200 = -240
     const r = await runScroll({ page, rng: () => 0.1 });
     expect(r.dy).toBe(-240);
   });
 
   it('computes dy = 0 when rng() = 0.3', async () => {
     const page = makePage();
-    // rng() = 0.3 → (0.3 - 0.3) * 1200 = 0
     const r = await runScroll({ page, rng: () => 0.3 });
     expect(r.dy).toBe(0);
   });
 
   it('computes maximum positive dy when rng() = 1', async () => {
     const page = makePage();
-    // rng() = 1 → (1 - 0.3) * 1200 = 840
     const r = await runScroll({ page, rng: () => 1 });
     expect(r.dy).toBe(840);
   });
 
   it('computes maximum negative dy when rng() = 0', async () => {
     const page = makePage();
-    // rng() = 0 → (0 - 0.3) * 1200 = -360
     const r = await runScroll({ page, rng: () => 0 });
     expect(r.dy).toBe(-360);
   });

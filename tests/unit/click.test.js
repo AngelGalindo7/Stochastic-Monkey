@@ -143,7 +143,6 @@ describe('runClick — buildXpathByName', () => {
     const page = makePage([]);
     await runClick({ page, target: { role: 'button', name: "Don't click" } });
     const xpathArg = page.raw.$$.mock.calls[0][0];
-    // replace(/'/g, '"') turns "Don't" into 'Don"t'; the xpath delimiter stays '...'
     expect(xpathArg).toMatch(/'Don"t click'/);
   });
 });
