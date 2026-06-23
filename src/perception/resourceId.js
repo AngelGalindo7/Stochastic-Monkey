@@ -1,4 +1,29 @@
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const ID_KEYS = ['id', 'uuid'];
+
+/**
+ * Extract the primary resource id from a mutation response body.
+ * Covers: top-level { id }, single-key wrapper { data: { id } },
+ * and single-row PostgREST arrays [{ id }].
+ * Returns { key: string, value: string } or null.
+ */
+export function tryExtractCreatedId(body) {
+  if (!body || typeof body !== 'object') return null;
+  if (Array.isArray(body)) {
+    return body.length === 1 ? tryExtractCreatedId(body[0]) : null;
+  }
+  for (const key of ID_KEYS) {
+    const val = body[key];
+    if (val !== undefined && val !== null) return { key, value: String(val) };
+  }
+  const keys = Object.keys(body);
+  if (keys.length === 1) {
+    const inner = body[keys[0]];
+    if (inner && typeof inner === 'object') return tryExtractCreatedId(inner);
+  }
+  return null;
+}
 const INT_RE = /^\d+$/;
 const STATIC_EXT_RE = /\.[a-z0-9]+$/i;
 const META_SEGMENTS = new Set(['health', 'ping', 'status', 'metrics', 'favicon.ico']);
