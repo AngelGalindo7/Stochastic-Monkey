@@ -89,6 +89,8 @@ const INTENTIONAL_ORACLE_ONLY = new Set([
   'MISSING_SECURITY_HEADERS',
   'INSECURE_COOKIES',
   'INFO_DISCLOSURE',
+  // Idempotency replay oracle — synthesized by checkIdempotency, not a raw page event.
+  'IDEMPOTENCY_VIOLATION',
 ]);
 
 describe('signal consistency: HARD_SIGNALS coverage in SIGNAL_SEVERITY', () => {
