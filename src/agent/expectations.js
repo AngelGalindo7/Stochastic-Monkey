@@ -70,6 +70,10 @@ export const HARD_SIGNALS = {
   CROSS_ACCOUNT_LEAK: { score: 1.0, severity: 'critical', tier: 'flag-for-review' },
   AUTHZ_UNCERTAIN: { score: 0.5, severity: 'low', tier: 'flag-for-review' },
 
+  // Idempotency-key replay oracle (DECISION_LOG 020). Auto-assert: two distinct
+  // non-null resource ids from one idempotency key is unambiguous data duplication.
+  IDEMPOTENCY_VIOLATION: { score: 1.0, severity: 'high', tier: 'auto-assert' },
+
   // Passive one-shot security checks (DECISION_LOG 018). All flag-for-review:
   // a missing header / weak cookie flag / error body pattern is a deployment gap,
   // not an unambiguous application crash, so they must not share the auto-assert tier.

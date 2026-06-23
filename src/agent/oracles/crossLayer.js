@@ -26,6 +26,7 @@
 // `ensure_resource_availability` (POST → GET exists).
 
 import { isFirstPartyUrl } from '../../perception/firstParty.js';
+import { tryExtractCreatedId } from '../../perception/resourceId.js';
 
 const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -33,32 +34,6 @@ const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 // 202 Accepted is deliberately excluded: it signals async processing, so the
 // resource may not be readable yet and a read would race the background job.
 const COMMITTED_STATUSES = new Set([200, 201, 204]);
-
-// Common response shapes for a newly-created resource. Covers top-level id, a
-// single-key data wrapper (JSON:API / FastAPI default), and the single-row
-// representation array PostgREST/Supabase returns. Returns { key, value } so the
-// verify URL can filter on the right column, or null when no id is extractable.
-const ID_KEYS = ['id', 'uuid'];
-
-function tryExtractCreatedId(body) {
-  if (!body || typeof body !== 'object') return null;
-  // PostgREST/Supabase `Prefer: return=representation` insert returns [{...}].
-  // Verify only single-row inserts — multi-row/empty are ambiguous for a single id.
-  if (Array.isArray(body)) {
-    return body.length === 1 ? tryExtractCreatedId(body[0]) : null;
-  }
-  for (const key of ID_KEYS) {
-    const val = body[key];
-    if (val !== undefined && val !== null) return { key, value: String(val) };
-  }
-  // single-key wrapper: { data: { id: 42 } } or { item: { id: 42 } }
-  const keys = Object.keys(body);
-  if (keys.length === 1) {
-    const inner = body[keys[0]];
-    if (inner && typeof inner === 'object') return tryExtractCreatedId(inner);
-  }
-  return null;
-}
 
 // Find the most recent committed mutation on an allowed domain.
 // Scans in reverse so the last write of a step is what we verify — multiple
