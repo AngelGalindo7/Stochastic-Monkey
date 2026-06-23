@@ -25,7 +25,9 @@ export const DEFAULT_KEY_HEADERS = new Set([
   'idempotency-key',
   'x-idempotency-key',
   'idempotency_key',
-  'x-request-id',
+  // x-request-id is a distributed-tracing correlation header (RFC 7240 / W3C Trace-Context
+  // adjacent); servers do not honor it for deduplication. Including it would trigger a replay
+  // on any traced SPA request and fire IDEMPOTENCY_VIOLATION on correct server behavior.
 ]);
 
 const MUTATION_METHODS = new Set(['POST', 'PUT']);
@@ -84,7 +86,6 @@ export async function checkIdempotency({
     if (!originalId) continue; // 204 or no-body response — can't compare
 
     if (replayCount.value >= maxReplaysPerRun) return { signal: null };
-    replayCount.value++;
 
     let replayResponse;
     try {
@@ -93,8 +94,9 @@ export async function checkIdempotency({
         headers: { ...(capture.requestHeaders ?? {}) },
         body: capture.requestBody != null ? JSON.stringify(capture.requestBody) : undefined,
       });
+      replayCount.value++; // count only successful round-trips, not network errors
     } catch {
-      continue; // network error — can't conclude anything
+      continue; // network error — can't conclude anything; don't consume a slot
     }
 
     const replayId = tryExtractCreatedId(replayResponse?.body);

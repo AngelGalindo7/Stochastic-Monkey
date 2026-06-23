@@ -8,7 +8,7 @@ const BODY_SIZE_LIMIT = 64 * 1024; // 64 KB — guards against OOM on large API 
 // All other headers are dropped — no leaking cookies, CSRF tokens, or tracing IDs.
 const AUTH_HEADER_KEYS = new Set([
   'apikey', 'authorization', 'x-api-key', 'x-auth-token',
-  'idempotency-key', 'x-idempotency-key', 'idempotency_key', 'x-request-id',
+  'idempotency-key', 'x-idempotency-key', 'idempotency_key',
 ]);
 
 function pickAuthHeaders(headers) {
