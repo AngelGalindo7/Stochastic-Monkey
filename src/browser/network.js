@@ -2,10 +2,14 @@ import { extractResourceId } from '../perception/resourceId.js';
 
 const BODY_SIZE_LIMIT = 64 * 1024; // 64 KB — guards against OOM on large API responses
 
-// Auth-relevant headers forwarded to oracle out-of-band reads.
-// Supabase requires apikey + Authorization; other APIs use x-api-key / x-auth-token.
+// Headers forwarded to oracle out-of-band reads.
+// Auth headers: Supabase requires apikey + Authorization; other APIs use x-api-key / x-auth-token.
+// Idempotency headers: captured so the replay oracle can forward the same key.
 // All other headers are dropped — no leaking cookies, CSRF tokens, or tracing IDs.
-const AUTH_HEADER_KEYS = new Set(['apikey', 'authorization', 'x-api-key', 'x-auth-token']);
+const AUTH_HEADER_KEYS = new Set([
+  'apikey', 'authorization', 'x-api-key', 'x-auth-token',
+  'idempotency-key', 'x-idempotency-key', 'idempotency_key', 'x-request-id',
+]);
 
 function pickAuthHeaders(headers) {
   if (!headers || typeof headers !== 'object') return null;
