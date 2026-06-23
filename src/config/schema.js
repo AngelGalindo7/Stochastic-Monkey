@@ -190,5 +190,26 @@ export function validate(config) {
     }
   }
 
+  const idem = config.oracle?.idempotency;
+  if (idem !== undefined) {
+    if (idem.enabled !== undefined && typeof idem.enabled !== 'boolean') {
+      throw new Error('config: oracle.idempotency.enabled must be a boolean if provided');
+    }
+    if (idem.keyHeaders !== undefined) {
+      if (!Array.isArray(idem.keyHeaders)) {
+        throw new Error('config: oracle.idempotency.keyHeaders must be an array if provided');
+      }
+      for (const [i, h] of idem.keyHeaders.entries()) {
+        if (typeof h !== 'string' || !h.length) {
+          throw new Error(`config: oracle.idempotency.keyHeaders[${i}] must be a non-empty string`);
+        }
+      }
+    }
+    if (idem.maxReplaysPerRun !== undefined &&
+        (typeof idem.maxReplaysPerRun !== 'number' || idem.maxReplaysPerRun < 1)) {
+      throw new Error('config: oracle.idempotency.maxReplaysPerRun must be a positive number if provided');
+    }
+  }
+
   return config;
 }
