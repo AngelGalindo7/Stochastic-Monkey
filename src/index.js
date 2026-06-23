@@ -27,6 +27,7 @@ import { runUpload } from './actions/upload.js';
 import { runFormFill } from './actions/formFill.js';
 import { detectFillableForms } from './perception/forms.js';
 import { checkCrossLayer } from './agent/oracles/crossLayer.js';
+import { checkIdempotency } from './agent/oracles/idempotency.js';
 import { checkBrokenImages } from './agent/oracles/structural.js';
 import { checkAuthzReplay } from './agent/oracles/authzReplay.js';
 import { checkSecurityHeaders } from './agent/oracles/securityHeaders.js';
@@ -71,8 +72,9 @@ function applyPassivePatch(config) {
   // Upsert oracle blocks unconditionally — a conditional write silently skips
   // when the key is absent from config.yaml, leaving the oracle enabled.
   config.oracle ??= {};
-  config.oracle.authzReplay = { ...(config.oracle.authzReplay ?? {}), enabled: false };
-  config.oracle.crossLayer  = { ...(config.oracle.crossLayer  ?? {}), enabled: false };
+  config.oracle.authzReplay   = { ...(config.oracle.authzReplay   ?? {}), enabled: false };
+  config.oracle.crossLayer    = { ...(config.oracle.crossLayer    ?? {}), enabled: false };
+  config.oracle.idempotency   = { ...(config.oracle.idempotency   ?? {}), enabled: false };
 }
 
 function makeRunId(seed) {
@@ -310,6 +312,8 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
     let prevUrl = null;
 
     const root = new MctsNode({ stateId: 'ROOT' });
+    // Shared mutable counter — initialized once per arm so the cap applies across all steps.
+    const idempotencyReplayCount = { value: 0 };
 
     for (let step = 0; step < config.run.maxSteps; step++) {
       const a11y = await snapshotPage(page.raw);
@@ -413,6 +417,20 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
           if (clResult.signal) {
             hardSignals.push(clResult.signal);
             hardEvidence.push({ signal: clResult.signal, detail: clResult.detail });
+          }
+
+          const idempResult = clClient
+            ? await checkIdempotency({
+                captures: newCaptures,
+                client: clClient,
+                allowedDomains: config.target.allowedDomains,
+                config: config.oracle?.idempotency,
+                replayCount: idempotencyReplayCount,
+              })
+            : { signal: null };
+          if (idempResult.signal) {
+            hardSignals.push(idempResult.signal);
+            hardEvidence.push({ signal: idempResult.signal, detail: idempResult.detail });
           }
 
           const brResult = await checkBrokenImages(page, targetOrigin, config.target.allowedDomains);
