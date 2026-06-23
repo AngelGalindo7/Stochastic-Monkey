@@ -154,7 +154,7 @@ describe('checkInfoDisclosure — detail format', () => {
     const body = 'ORA-00942: table or view does not exist';
     const r = checkInfoDisclosure([cap(500, body, url)]);
     expect(r.detail).toMatch(/Oracle DB error/);
-    expect(r.detail).toMatch(/500/);
+    expect(r.detail).toMatch(/in 500 response from/);
     expect(r.detail).toMatch(url);
   });
 
