@@ -260,4 +260,42 @@ describe('writeReport', () => {
     });
     expect(folderRel.startsWith('BUG')).toBe(true);
   });
+
+  it('copies trace.jsonl when tracePath points to an existing file', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hmtest-'));
+    const traceFile = path.join(rootDir, 'run.trace.jsonl');
+    fs.writeFileSync(traceFile, '{"event":"start"}\n{"event":"end"}\n');
+    const { folder } = await writeReport({
+      rootDir,
+      root: 'BUG',
+      seed: 2,
+      severity: 'high',
+      pageUrl: 'https://example.com',
+      breadcrumbs: [],
+      markdownFile: 'bug.md',
+      renderMarkdown: () => '# Bug',
+      severityPayload: {},
+      tracePath: 'run.trace.jsonl',
+    });
+    const dest = path.join(folder, 'trace.jsonl');
+    expect(fs.existsSync(dest)).toBe(true);
+    expect(fs.readFileSync(dest, 'utf8')).toContain('"event":"start"');
+  });
+
+  it('skips trace.jsonl when tracePath points to a non-existent file', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hmtest-'));
+    const { folder } = await writeReport({
+      rootDir,
+      root: 'BUG',
+      seed: 3,
+      severity: 'high',
+      pageUrl: 'https://example.com',
+      breadcrumbs: [],
+      markdownFile: 'bug.md',
+      renderMarkdown: () => '# Bug',
+      severityPayload: {},
+      tracePath: 'does-not-exist.jsonl',
+    });
+    expect(fs.existsSync(path.join(folder, 'trace.jsonl'))).toBe(false);
+  });
 });
