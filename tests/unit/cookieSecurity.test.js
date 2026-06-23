@@ -134,7 +134,7 @@ describe('checkCookieSecurity — priority', () => {
       goodCookie({ name: 'auth', httpOnly: false }),
     ]);
     const result = await checkCookieSecurity(page, 'https://example.com');
-    expect(result.detail).toMatch(/\|/);
+    expect(result.detail).toMatch(/theme \[LOW\].*missing HttpOnly \| auth \[HIGH\].*missing HttpOnly/);
   });
 });
 
