@@ -72,7 +72,6 @@ describe('runInput — success', () => {
   it('selects value from dataPool using rng index', async () => {
     const handle = typeableHandle();
     const page = makePage([handle]);
-    // rng() = 0.5 → Math.floor(0.5 * 3) = 1 → 'world'
     const r = await runInput({ page, target: { name: 'q' }, dataPool: DATA_POOL, rng: () => 0.5 });
     expect(r.value).toBe('world');
   });
@@ -80,7 +79,6 @@ describe('runInput — success', () => {
   it('selects the last item when rng() is close to 1', async () => {
     const handle = typeableHandle();
     const page = makePage([handle]);
-    // rng() = 0.99 → Math.floor(0.99 * 3) = 2 → 'test@example.com'
     const r = await runInput({ page, target: { name: 'q' }, dataPool: DATA_POOL, rng: () => 0.99 });
     expect(r.value).toBe('test@example.com');
   });
@@ -152,5 +150,13 @@ describe('runInput — xpath shape', () => {
     expect(xpathArg).toMatch(/@aria-label='username'/);
     expect(xpathArg).toMatch(/@placeholder='username'/);
     expect(xpathArg).toMatch(/@name='username'/);
+  });
+
+  it('escapes single quotes in target.name to avoid malformed xpath', async () => {
+    const page = makePage([]);
+    await runInput({ page, target: { name: "user's email" }, dataPool: DATA_POOL, rng: () => 0 });
+    const xpathArg = page.raw.$$.mock.calls[0][0];
+    expect(xpathArg).toMatch(/@aria-label='user"s email'/);
+    expect(xpathArg).not.toMatch(/@aria-label='user's email'/);
   });
 });
