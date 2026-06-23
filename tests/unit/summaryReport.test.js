@@ -108,7 +108,8 @@ describe('writeSummaryReport — findings sections', () => {
   it('renders a bug table row with signal, severity, URL, and artifact path', () => {
     const { rootDir } = run({ bugs: [makeBug()] });
     const md = fs.readFileSync(path.join(rootDir, 'BUG', 'abc12345', 'summary', 'report.md'), 'utf8');
-    expect(md).toMatch(/HTTP_500/);
+    // anchor to a pipe-delimited table row, not just anywhere in the document
+    expect(md).toMatch(/\|\s*1\s*\|\s*HTTP_500\s*\|/);
     expect(md).toMatch(/critical/);
     expect(md).toMatch(/example\.com\/api/);
     expect(md).toMatch(/BUG\/2026-06-01/);
@@ -117,7 +118,8 @@ describe('writeSummaryReport — findings sections', () => {
   it('renders a flagged table row', () => {
     const { rootDir } = run({ flagged: [makeBug({ signal: 'DOM_FROZEN', severity: 'medium' })] });
     const md = fs.readFileSync(path.join(rootDir, 'BUG', 'abc12345', 'summary', 'report.md'), 'utf8');
-    expect(md).toMatch(/DOM_FROZEN/);
+    // DOM_FROZEN also appears in What-to-fix; anchor to a pipe-delimited row
+    expect(md).toMatch(/\|\s*1\s*\|\s*DOM_FROZEN\s*\|/);
   });
 
   it('includes the correct findings count in the heading', () => {
@@ -156,6 +158,16 @@ describe('writeSummaryReport — What to fix and duration', () => {
     const { rootDir } = run({ bugs: [makeBug({ signal: 'UNKNOWN_SIGNAL_XYZ' })] });
     const md = fs.readFileSync(path.join(rootDir, 'BUG', 'abc12345', 'summary', 'report.md'), 'utf8');
     expect(md).toMatch(/Review occurrences of UNKNOWN_SIGNAL_XYZ/);
+  });
+
+  it('deduplicates signals that appear in both bugs and flagged — advice rendered once', () => {
+    const { rootDir } = run({
+      bugs: [makeBug({ signal: 'HTTP_500' })],
+      flagged: [makeBug({ signal: 'HTTP_500', severity: 'medium' })],
+    });
+    const md = fs.readFileSync(path.join(rootDir, 'BUG', 'abc12345', 'summary', 'report.md'), 'utf8');
+    const matches = [...md.matchAll(/\*\*HTTP_500:/g)];
+    expect(matches).toHaveLength(1);
   });
 
   it('formats duration < 1000ms as ms', () => {
