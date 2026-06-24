@@ -25,3 +25,9 @@ jobs:
 
       - name: Run unit tests
         run: npm test
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Integration smoke
+        run: PUPPETEER_SKIP_DOWNLOAD=true npx vitest run --config vitest.smoke.config.mjs tests/smoke/integration.test.mjs
