@@ -40,7 +40,7 @@ function isCapabilityUrl(url) {
 
 // Collect id/uuid-like values from a response body (bounded depth/width) so the
 // replay body can be checked for the SAME owned record the authed arm saw.
-const ID_FIELDS = new Set(['id', 'uuid', 'user_id', 'owner_id', 'account_id']);
+const ID_FIELDS = new Set(['id', 'uuid', 'user_id', 'owner_id', 'account_id', '_id', 'userId', 'ownerId', 'accountId', 'itemId', 'entryId', 'recordId', 'resourceId', 'createdBy', 'authorId']);
 
 function collectIds(value, out = new Set(), depth = 0) {
   if (depth > 4 || out.size > 200 || value == null) return out;
