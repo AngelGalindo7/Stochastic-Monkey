@@ -90,3 +90,11 @@ See `.env.example` for the full list. Key vars:
 - `OPENAI_API_KEY` — required for LLM-guided exploration
 - `GITHUB_TOKEN` + `GITHUB_REPO_OWNER` + `GITHUB_REPO_NAME` — auto-file GitHub issues on bugs
 - `LIGHTPANDA_BIN` — path to Lightpanda binary (optional, Linux only)
+
+## Troubleshooting
+
+**Auth cookies have expired** — re-export fresh cookies from your browser DevTools (Application > Cookies) and update the `auth.cookies` section in `config.yaml`. Cookies are applied before each run.
+
+**Forms are not being submitted** — the tool runs in passive mode by default, which never submits forms. Run with `--active` to enable form submission and write-dependent oracles.
+
+**No bugs found** — this may mean the app is well-built, or the exploration did not reach the buggy path. Increase `mcts.maxSteps` in `config.yaml` to explore more paths. Change `mcts.seed` to explore a statistically independent trajectory.
