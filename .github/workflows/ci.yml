@@ -32,3 +32,6 @@ jobs:
 
       - name: Run unit tests
         run: npm test
+
+      - name: Check publish bundle
+        run: npm pack --dry-run
