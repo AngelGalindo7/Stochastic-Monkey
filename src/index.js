@@ -306,7 +306,7 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
     const macroFireProb = config.macros?.fireProbability ?? 0;
     const macroList = config.macros?.list ?? [];
     const stepTimeoutMs = config.run?.stepTimeoutMs ?? 10000;
-    const recentStateIds = [];
+    const recentStateIds = new Set();
     const noveltyDenylist = (config.novelty?.nameDenylist ?? []).map((s) => new RegExp(s, 'i'));
     let prevA11y = null;
     let prevUrl = null;
@@ -321,7 +321,7 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
       const fileInputs = await getFileInputs(page.raw);
       const forms = await detectFillableForms(page.raw);
       const stateId = clusterId(a11y, config.mcts.abstractionGranularity);
-      recentStateIds.push(stateId);
+      recentStateIds.add(stateId);
       const cands = candidateActions(a11y, {
         weights: config.actions.weights,
         blockedSelectors: config.target.blockedSelectors,
