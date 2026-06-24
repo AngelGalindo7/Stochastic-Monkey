@@ -61,6 +61,28 @@ Edit `config.yaml`:
 | `llm.enabled` / `llm.model` | Disable to run in pure hard-signal mode |
 | `auth.cookies` | Pre-login cookies applied before first `goto` |
 
+## Targeting your app
+
+Point the monkey at any SPA by setting the target URL and allowed domains in `config.yaml`:
+
+```yaml
+target:
+  url: https://your-app.example.com
+  allowedDomains: ["your-app.example.com", "api.your-app.example.com"]
+```
+
+For apps requiring authentication, supply cookies in `config.yaml`:
+
+```yaml
+auth:
+  cookies:
+    - name: session
+      value: "your-session-token"
+      domain: "your-app.example.com"
+```
+
+Use passive mode (default) for apps you do not own — it never submits forms or mutates state. Use active mode (`--active`) for apps you own to enable form submission and authorization probes.
+
 ## Environment Variables
 
 See `.env.example` for the full list. Key vars:
