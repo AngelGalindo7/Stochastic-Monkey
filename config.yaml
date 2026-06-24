@@ -182,7 +182,7 @@ oracle:
     # Retry the GET this many times before flagging. Covers the UI-success-vs-
     # committed-state race on eventually-consistent backends (read replicas, async
     # commit paths). Total wait ≈ (pollAttempts - 1) × pollDelayMs.
-    pollAttempts: 3
+    pollAttempts: 3        # (increase to 6-8 for geo-replicated or multi-region deployments)
     pollDelayMs: 500        # ms between retries
     # What "deleted" looks like for this target. RFC 9110 allows 404 or 410.
     # Add 403 if the target hides deleted resources behind a permission check.
