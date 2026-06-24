@@ -1,3 +1,8 @@
+/* Statistical-memo MCTS: this tree records which (state, action) pairs have been
+   explored and their cumulative rewards, but does NOT re-navigate the browser to
+   match the selected node before action execution. The tree bounds exploration via
+   UCB1 scores but does not enforce state-graph consistency. Full re-navigation
+   is deferred — it increases per-step cost 3-10x. See DECISION_LOG #021. */
 import { selectChild } from './policy.js';
 
 export class MctsNode {
