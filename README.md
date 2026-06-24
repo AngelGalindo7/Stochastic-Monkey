@@ -6,6 +6,10 @@ A Monte Carlo Tree Search bug hunter for web apps. The agent explores a target s
 
 Local-only. ~$0/month plus OpenAI usage (cents per run).
 
+## How it works
+
+Heuristic Monkey uses MCTS (Monte Carlo Tree Search) to explore a web app — a tree search algorithm that balances exploring new parts of your app with revisiting areas where bugs were found. Each unique page state is represented as a snapshot of the browser's accessibility tree (the same semantic structure screen readers use), so two pages that look visually different but share the same interactive elements are treated as the same state. Hard signals — HTTP 500 responses, uncaught JavaScript errors, and broken image loads — detect bugs deterministically without any interpretation: when one fires, the agent scores that path maximally and focuses exploration there. The LLM layer is optional; all hard-signal detection works without an API key, and the LLM only adds soft "surprise" scoring to catch regressions that don't crash outright.
+
 ## Quick Start
 
 ```bash
