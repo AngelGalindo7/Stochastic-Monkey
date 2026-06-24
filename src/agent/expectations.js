@@ -29,7 +29,8 @@ export const HARD_SIGNALS = {
   // PERF_BREACH decommissioned (DECISION_LOG 013): per-action wall-clock latency is
   // environment noise, not reproducible across machines, and never indicated a real bug.
   // first-party but app-intentional patterns (error boundaries, fetch guards) are indistinguishable from crashes.
-  CONSOLE_ERROR: { score: 0.7, severity: 'medium', tier: 'flag-for-review' },
+  CONSOLE_ERROR: { score: 0.55, severity: 'medium', tier: 'flag-for-review' },
+  // Score intentionally below STATE_WRONG_VALUE (0.6) — console warning is ambiguous; a persisted wrong value is a data integrity fault.
   // Demoted to flag-for-review (DECISION_LOG 013): a fixed-delay empty-DOM check
   // false-fires on slow SPA hydration and legitimately-empty states; a genuine
   // crash-to-blank-screen is already auto-asserted via the co-firing PAGEERROR/

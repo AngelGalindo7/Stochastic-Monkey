@@ -53,6 +53,12 @@ describe('expectations.scoreState — bug detection (hard signals)', () => {
   });
 });
 
+describe('HARD_SIGNALS score ordering invariants', () => {
+  it('CONSOLE_ERROR scores below STATE_WRONG_VALUE (data integrity > console noise)', () => {
+    expect(HARD_SIGNALS.CONSOLE_ERROR.score).toBeLessThan(HARD_SIGNALS.STATE_WRONG_VALUE.score);
+  });
+});
+
 describe('expectations.scoreState — two-tier authz verdicts (adversarial A1/A3)', () => {
   it('CROSS_ACCOUNT_LEAK is flag-for-review: even sentinel-grounded leaks need human confirmation', () => {
     const out = scoreState({ observed: tree(), hardSignals: ['CROSS_ACCOUNT_LEAK'] });

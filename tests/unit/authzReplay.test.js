@@ -233,6 +233,39 @@ describe('checkAuthzReplay — bookkeeping', () => {
 });
 
 // ---------------------------------------------------------------------------
+// collectIds — camelCase and extended field coverage
+// ---------------------------------------------------------------------------
+
+describe('collectIds — camelCase and extended field coverage', () => {
+  // collectIds is not exported; test it indirectly through checkAuthzReplay:
+  // give the authenticated read a body with one of the new field names as the
+  // owned id, then replay it back — AUTHZ_UNCERTAIN fires only if collectIds
+  // recognised the field name.
+  const EXTENDED_FIELDS = [
+    ['_id', '_id'],
+    ['userId', 'userId'],
+    ['ownerId', 'ownerId'],
+    ['accountId', 'accountId'],
+    ['itemId', 'itemId'],
+    ['entryId', 'entryId'],
+    ['recordId', 'recordId'],
+    ['resourceId', 'resourceId'],
+    ['createdBy', 'createdBy'],
+    ['authorId', 'authorId'],
+  ];
+
+  for (const [field] of EXTENDED_FIELDS) {
+    it(`recognises ${field} as an owned-id field`, async () => {
+      const idValue = 'test-id-123';
+      const read = ownedRead({ responseBody: [{ [field]: idValue }] });
+      const replay = makeReplay([{ status: 200, body: [{ [field]: idValue }] }]);
+      const result = await checkAuthzReplay({ reads: [read], replay, ...DEFAULTS });
+      expect(result.signal).toBe('AUTHZ_UNCERTAIN');
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Sentinel-grounded upgrade: CROSS_ACCOUNT_LEAK
 // ---------------------------------------------------------------------------
 
