@@ -139,6 +139,8 @@ function resolveVerify(capture) {
 // fetchOptions is forwarded to client.fetch on every attempt — carries auth headers
 // captured from the original mutation (e.g. Supabase apikey + Authorization).
 // Returns { satisfied: boolean, last: {status, body} | null }.
+// Default 1.5s window (3 x 500ms) covers single-region backends.
+// For geo-replicated or multi-region deployments (e.g. Supabase Pro cross-AZ), increase pollAttempts to 6-8 in config.yaml.
 async function pollUntil(client, url, predicate, { maxAttempts, delayMs, fetchOptions = {} }) {
   let last = null;
   for (let i = 0; i < maxAttempts; i++) {
