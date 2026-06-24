@@ -50,7 +50,7 @@ function collectIds(value, out = new Set(), depth = 0) {
   }
   if (typeof value === 'object') {
     for (const [k, v] of Object.entries(value)) {
-      if (ID_FIELDS.has(k.toLowerCase()) && (typeof v === 'string' || typeof v === 'number')) {
+      if ((ID_FIELDS.has(k) || ID_FIELDS.has(k.toLowerCase())) && (typeof v === 'string' || typeof v === 'number')) {
         out.add(String(v));
       } else if (v && typeof v === 'object') {
         collectIds(v, out, depth + 1);
