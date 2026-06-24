@@ -124,3 +124,22 @@ describe('descend', () => {
     expect(result).toBe(childA);
   });
 });
+
+describe('recentStateIds Set contract', () => {
+  it('does not duplicate on repeated add', () => {
+    const s = new Set();
+    s.add('state-a');
+    s.add('state-a');
+    expect(s.size).toBe(1);
+  });
+  it('.has() returns true for added items', () => {
+    const s = new Set();
+    s.add('state-1');
+    expect(s.has('state-1')).toBe(true);
+  });
+  it('.has() returns false for non-added items', () => {
+    const s = new Set();
+    s.add('state-1');
+    expect(s.has('state-99')).toBe(false);
+  });
+});
