@@ -1,3 +1,5 @@
+![CI](https://github.com/AngelGalindo7/heuristic-monkey/actions/workflows/ci.yml/badge.svg)
+
 # Heuristic Monkey
 
 A Monte Carlo Tree Search bug hunter for web apps. The agent explores a target site stochastically, asks an LLM to predict what each action *should* do, and rewards itself when reality diverges from the prediction. Crashes, 5xx responses, broken images, and silent JS errors override the LLM and force a maximal "surprise" reward — so the search aggressively zooms in on real bugs.
