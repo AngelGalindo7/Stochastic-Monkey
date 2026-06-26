@@ -120,6 +120,7 @@ describe('lightpanda CDP adapter', () => {
     }
   });
 
+  describe.skipIf(process.platform === 'win32')('integration (requires non-Windows binary)', () => {
   it('connects and returns a browser with kind=lightpanda', async () => {
     process.env.LIGHTPANDA_CDP_URL = `ws://127.0.0.1:${PORT}`;
     const browser = await launchLightpanda();
@@ -257,4 +258,5 @@ describe('lightpanda CDP adapter', () => {
     await browser.close();
     delete process.env.LIGHTPANDA_CDP_URL;
   });
+  }); // end skipIf describe
 });

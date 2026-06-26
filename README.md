@@ -7,7 +7,7 @@ Local-only. ~$0/month plus OpenAI usage (cents per run).
 ## Quick Start
 
 ```bash
-npm install                # downloads Chromium for Puppeteer
+npm install                # use --include=optional to add browser engines
 cp .env.example .env       # add OPENAI_API_KEY (optional)
 npm test                   # vitest — should be green
 npm start                  # runs config.yaml against the default target
