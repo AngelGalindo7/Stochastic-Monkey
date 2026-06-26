@@ -7,7 +7,7 @@ describe('novelty.scoreNovelty — discrete buckets', () => {
   it('0.0 when the current state cluster was seen recently', () => {
     const out = scoreNovelty({
       currentStateId: 'abc123',
-      recentStateIds: ['xxx', 'abc123'],
+      recentStateIds: new Set(['xxx', 'abc123']),
       prevA11y: tree(),
       currA11y: tree([{ role: 'button', name: 'New' }]),
     });
@@ -42,10 +42,50 @@ describe('novelty.scoreNovelty — discrete buckets', () => {
     expect(out.score).toBe(0.5);
   });
 
+  it('0.0 when stateId is in a Set of recent ids (Set.has semantics)', () => {
+    const out = scoreNovelty({
+      currentStateId: 'seen',
+      recentStateIds: new Set(['other', 'seen']),
+      prevA11y: tree(),
+      currA11y: tree([{ role: 'button', name: 'X' }]),
+    });
+    expect(out.score).toBe(0.0);
+    expect(out.reason).toMatch(/repeat/);
+  });
+
   it('0.0 when nothing visibly changed', () => {
     const same = tree([{ role: 'button', name: 'A' }]);
     const out = scoreNovelty({ prevA11y: same, currA11y: tree([{ role: 'button', name: 'A' }]) });
     expect(out.score).toBe(0.0);
+  });
+
+  it('0.2 when a control disappears with no new control appearing', () => {
+    const out = scoreNovelty({
+      prevA11y: tree([{ role: 'button', name: 'Save' }, { role: 'status', name: 'Saving' }]),
+      currA11y: tree([{ role: 'button', name: 'Save' }]),
+    });
+    expect(out.score).toBe(0.2);
+    expect(out.reason).toBe('text shifted');
+  });
+
+  it('falls through to a11y scoring when currentStateId is null', () => {
+    const out = scoreNovelty({
+      currentStateId: null,
+      recentStateIds: new Set(['x']),
+      prevA11y: tree(),
+      currA11y: tree([{ role: 'button', name: 'X' }]),
+    });
+    expect(out.score).toBe(0.5);
+  });
+
+  it('falls through when recentStateIds is empty', () => {
+    const out = scoreNovelty({
+      currentStateId: 'new-state',
+      recentStateIds: new Set(),
+      prevA11y: tree(),
+      currA11y: tree([{ role: 'button', name: 'X' }]),
+    });
+    expect(out.score).toBe(0.5);
   });
 });
 

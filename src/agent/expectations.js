@@ -107,7 +107,7 @@ export function scoreState({
   currentUrl = null,
   prevUrl = null,
   hardSignals = [],
-  recentStateIds = [],
+  recentStateIds = new Set(),
   currentStateId = null,
   lowSignalExtra = [],
 }) {

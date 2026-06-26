@@ -48,11 +48,11 @@ export function scoreNovelty({
   prevUrl = null,
   currUrl = null,
   currentStateId = null,
-  recentStateIds = [],
+  recentStateIds = new Set(),
   lowSignalExtra = [],
 }) {
   // 0.0 — we have been in this state cluster before. Refresh/scroll/no-op loops.
-  if (currentStateId && recentStateIds.includes(currentStateId)) {
+  if (currentStateId && recentStateIds.has(currentStateId)) {
     return { score: 0.0, reason: 'repeat state cluster' };
   }
 
