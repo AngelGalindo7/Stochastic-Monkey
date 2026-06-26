@@ -1,4 +1,4 @@
-export async function runNavigate({ page, allowedDomains, currentUrl }) {
+export async function runNavigate({ page, allowedDomains, currentUrl, rng }) {
   const start = Date.now();
   try {
     const links = await page.raw.$$eval('a[href]', (as) =>
@@ -15,7 +15,7 @@ export async function runNavigate({ page, allowedDomains, currentUrl }) {
     if (internal.length === 0) {
       return { success: false, error: 'no internal links', latencyMs: Date.now() - start };
     }
-    const target = internal[Math.floor(Math.random() * internal.length)];
+    const target = internal[Math.floor(rng() * internal.length)];
     await page.raw.goto(target, { waitUntil: 'domcontentloaded', timeout: 8000 });
     return { success: true, navigatedTo: target, latencyMs: Date.now() - start };
   } catch (err) {

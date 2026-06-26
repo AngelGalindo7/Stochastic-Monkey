@@ -4,9 +4,12 @@ export const SIGNAL_SEVERITY = {
   HTTP_4XX: 'medium',
   ASSET_4XX: 'medium',
   REQUEST_FAILED: 'medium',
-  CONSOLE_ERROR: 'low',
-  PERF_BREACH: 'low',
+  CONSOLE_ERROR: 'medium',
   DOM_FROZEN: 'medium',
+  STATE_NOT_DELETED: 'critical',
+  STATE_NOT_PERSISTED: 'critical',
+  STATE_WRONG_VALUE: 'medium',
+  BROKEN_IMAGE: 'low',
 };
 
 const RANK = { critical: 4, high: 3, medium: 2, low: 1 };

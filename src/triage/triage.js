@@ -1,9 +1,17 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import {
+  writeReport,
+  buildReportFolderName,
+  renderStepLines,
+  renderEvidenceBlock,
+  reproSectionLines,
+} from './reportWriter.js';
 
 export function buildBugFolderName({ ts, seed, severity, root = 'BUG' }) {
-  const safeTs = ts.replace(/:/g, '-').replace(/\..+Z$/, 'Z');
-  return path.join(root, `${safeTs}__seed${seed}__${severity}`);
+  return buildReportFolderName({ ts, seed, severity, root });
+}
+
+export function buildFlaggedFolderName({ ts, seed, severity, root = 'FLAGGED' }) {
+  return buildReportFolderName({ ts, seed, severity, root });
 }
 
 export async function writeBugReport({
@@ -23,51 +31,86 @@ export async function writeBugReport({
   stepsDirRel = null,
   config,
 }) {
-  const ts = new Date().toISOString();
-  const folderRel = buildBugFolderName({ ts, seed, severity, root: bugRoot });
-  const folder = path.resolve(rootDir, folderRel);
-  fs.mkdirSync(folder, { recursive: true });
-
-  if (screenshotBuffer) {
-    fs.writeFileSync(path.join(folder, 'screenshot.png'), screenshotBuffer);
-  }
-  if (domHtml) {
-    fs.writeFileSync(path.join(folder, 'dom.html'), domHtml);
-  }
-  fs.writeFileSync(
-    path.join(folder, 'breadcrumbs.jsonl'),
-    breadcrumbs.map((b) => JSON.stringify(b)).join('\n'),
-  );
-  if (tracePath) {
-    const resolvedTrace = path.resolve(rootDir, tracePath);
-    if (fs.existsSync(resolvedTrace)) {
-      fs.copyFileSync(resolvedTrace, path.join(folder, 'trace.jsonl'));
-    }
-  }
-
-  const bugMd = renderBugMd({
-    pageUrl,
-    severity,
-    signal,
+  return writeReport({
+    rootDir,
+    root: bugRoot,
     seed,
+    severity,
+    pageUrl,
     breadcrumbs,
-    prediction,
-    surpriseScore,
-    folderRel,
-    stepsDirRel,
-    evidence,
+    screenshotBuffer,
+    domHtml,
+    tracePath,
+    markdownFile: 'bug.md',
+    renderMarkdown: (folderRel) =>
+      renderBugMd({
+        pageUrl,
+        severity,
+        signal,
+        seed,
+        breadcrumbs,
+        prediction,
+        surpriseScore,
+        folderRel,
+        stepsDirRel,
+        evidence,
+      }),
+    severityPayload: { severity, signal, surpriseScore },
   });
-  fs.writeFileSync(path.join(folder, 'bug.md'), bugMd);
+}
 
-  const repro = renderRepro({ seed, pageUrl, configPath: 'config.yaml' });
-  fs.writeFileSync(path.join(folder, 'repro.js'), repro);
-
-  fs.writeFileSync(
-    path.join(folder, 'severity.json'),
-    JSON.stringify({ severity, signal, surpriseScore }, null, 2),
-  );
-
-  return { folder, folderRel };
+export async function writeFlaggedReport({
+  rootDir,
+  bugRoot = 'FLAGGED',
+  seed,
+  severity,
+  signal,
+  pageUrl,
+  breadcrumbs,
+  screenshotBuffer = null,
+  domHtml = '',
+  surpriseScore = null,
+  prediction = null,
+  evidence = [],
+  tracePath = null,
+  stepsDirRel = null,
+  config,
+  reason = '',
+}) {
+  return writeReport({
+    rootDir,
+    root: bugRoot,
+    seed,
+    severity,
+    pageUrl,
+    breadcrumbs,
+    screenshotBuffer,
+    domHtml,
+    tracePath,
+    markdownFile: 'flagged.md',
+    renderMarkdown: (folderRel) =>
+      renderFlaggedMd({
+        pageUrl,
+        severity,
+        signal,
+        seed,
+        breadcrumbs,
+        prediction,
+        surpriseScore,
+        folderRel,
+        stepsDirRel,
+        evidence,
+        reason,
+      }),
+    severityPayload: {
+      tier: 'flag-for-review',
+      confidence: 'low',
+      signal,
+      severity,
+      score: surpriseScore,
+      reason,
+    },
+  });
 }
 
 function renderBugMd({
@@ -82,20 +125,6 @@ function renderBugMd({
   stepsDirRel,
   evidence = [],
 }) {
-  const stepLines = breadcrumbs
-    .filter((b) => b.type === 'action' || b.type === 'navigate')
-    .map((b, i) => `${i + 1}. ${b.summary}`)
-    .join('\n');
-
-  const evidenceBlock = evidence.length
-    ? [
-        '## Evidence (raw page-level signals)',
-        '',
-        ...evidence.map((e) => `- **${e.signal}** — ${e.detail}`),
-        '',
-      ].join('\n')
-    : '';
-
   return [
     `# Bug Report — ${severity.toUpperCase()}`,
     '',
@@ -106,40 +135,56 @@ function renderBugMd({
     `**Folder:** ${folderRel}`,
     stepsDirRel ? `**Step screenshots:** ${stepsDirRel.replace(/\\/g, '/')}/` : '',
     '',
-    evidenceBlock,
+    renderEvidenceBlock(evidence),
     '## Steps the agent took before failure',
     '',
-    stepLines || '(no action breadcrumbs recorded)',
+    renderStepLines(breadcrumbs) || '(no action breadcrumbs recorded)',
     '',
     prediction ? `## Predicted outcome\n\n> ${prediction}\n` : '',
-    '## How to reproduce',
-    '',
-    '```',
-    `node ${folderRel.replace(/\\/g, '/')}/repro.js`,
-    '```',
-    '',
-    'See `breadcrumbs.jsonl` for the full event log, `trace.jsonl` for OTel spans, ' +
-      'and `steps/<n>.png` (in the run-id folder) for the per-step screenshot timeline.',
+    ...reproSectionLines(folderRel),
   ]
     .filter(Boolean)
     .join('\n');
 }
 
-function renderRepro({ seed, pageUrl, configPath }) {
-  return `// Auto-generated by heuristic-monkey triage. Reruns the same seed.
-import { spawnSync } from 'node:child_process';
-import path from 'node:path';
-import url from 'node:url';
-
-const here = path.dirname(url.fileURLToPath(import.meta.url));
-const root = path.resolve(here, '..', '..');
-
-const env = { ...process.env, HEURISTIC_SEED: '${seed}', HEURISTIC_TARGET_URL: '${pageUrl}' };
-const result = spawnSync('node', [path.join(root, 'src/index.js'), '--config', '${configPath}'], {
-  cwd: root,
-  env,
-  stdio: 'inherit',
-});
-process.exit(result.status ?? 1);
-`;
+function renderFlaggedMd({
+  pageUrl,
+  severity,
+  signal,
+  seed,
+  breadcrumbs,
+  prediction,
+  surpriseScore,
+  folderRel,
+  stepsDirRel,
+  evidence = [],
+  reason = '',
+}) {
+  return [
+    `# FLAGGED FOR REVIEW — ${signal}`,
+    '',
+    '**This is not a confirmed bug. The signal is ambiguous. Human review required.**',
+    '',
+    `**URL:** ${pageUrl}`,
+    `**Seed:** ${seed}`,
+    `**Signal:** ${signal}`,
+    `**Severity:** ${severity}`,
+    surpriseScore !== null ? `**Surprise score:** ${surpriseScore.toFixed(2)}` : '',
+    `**Folder:** ${folderRel}`,
+    stepsDirRel ? `**Step screenshots:** ${stepsDirRel.replace(/\\/g, '/')}/` : '',
+    '',
+    '## Why this is ambiguous',
+    '',
+    reason || '(no reason provided)',
+    '',
+    renderEvidenceBlock(evidence),
+    '## Steps the agent took before flagging',
+    '',
+    renderStepLines(breadcrumbs) || '(no action breadcrumbs recorded)',
+    '',
+    prediction ? `## Predicted outcome\n\n> ${prediction}\n` : '',
+    ...reproSectionLines(folderRel),
+  ]
+    .filter(Boolean)
+    .join('\n');
 }

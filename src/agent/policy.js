@@ -25,7 +25,7 @@ export function isBlocked(node, blockedSelectors = []) {
   return false;
 }
 
-export function candidateActions(a11yTree, { weights, blockedSelectors }) {
+export function candidateActions(a11yTree, { weights, blockedSelectors, fileInputs = [], forms = [] }) {
   const interactive = listInteractiveNodes(a11yTree);
   const out = [];
   for (const node of interactive) {
@@ -36,7 +36,21 @@ export function candidateActions(a11yTree, { weights, blockedSelectors }) {
     if (prior <= 0) continue;
     out.push({ type, target: node, prior });
   }
-  if (out.length === 0 && (weights.NAVIGATION ?? 0) > 0) {
+  const uploadPrior = weights.UPLOAD ?? 0;
+  if (uploadPrior > 0) {
+    for (const fi of fileInputs) {
+      out.push({ type: 'UPLOAD', target: fi, prior: uploadPrior });
+    }
+  }
+  const formPrior = weights.FORM_FILL ?? 0;
+  if (formPrior > 0) {
+    for (const f of forms) {
+      if (f.fieldCount > 0) {
+        out.push({ type: 'FORM_FILL', target: { formIndex: f.index, name: `form-${f.index}` }, prior: formPrior });
+      }
+    }
+  }
+  if ((weights.NAVIGATION ?? 0) > 0) {
     out.push({ type: 'NAVIGATION', target: null, prior: weights.NAVIGATION });
   }
   if ((weights.SCROLL ?? 0) > 0) {

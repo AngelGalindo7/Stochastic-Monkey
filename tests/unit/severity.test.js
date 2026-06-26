@@ -43,7 +43,6 @@ describe('severity.SIGNAL_SEVERITY', () => {
       'ASSET_4XX',
       'REQUEST_FAILED',
       'CONSOLE_ERROR',
-      'PERF_BREACH',
       'DOM_FROZEN',
     ];
     for (const sig of required) {

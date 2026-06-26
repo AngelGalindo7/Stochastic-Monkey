@@ -1,10 +1,13 @@
+import { queryByXPath } from './locate.js';
+
 export async function runInput({ page, target, dataPool, rng }) {
   const start = Date.now();
   if (!target?.name) return { success: false, error: 'no target', latencyMs: 0 };
   const value = dataPool[Math.floor(rng() * dataPool.length)];
-  const xpath = `xpath/.//input[@aria-label='${target.name}' or @placeholder='${target.name}' or @name='${target.name}']`;
+  const escaped = target.name.replace(/'/g, '"');
+  const xpath = `//input[@aria-label='${escaped}' or @placeholder='${escaped}' or @name='${escaped}']`;
   try {
-    const handles = await page.raw.$$(xpath);
+    const handles = await queryByXPath(page, xpath);
     if (!handles.length) {
       return { success: false, error: 'no matching input', latencyMs: Date.now() - start };
     }

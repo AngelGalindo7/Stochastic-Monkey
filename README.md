@@ -11,17 +11,19 @@ npm install                # use --include=optional to add browser engines
 cp .env.example .env       # add OPENAI_API_KEY (optional)
 npm test                   # vitest — should be green
 npm start                  # runs config.yaml against the default target
+npm start -- --url https://myapp.lovable.app   # override target URL without editing config.yaml
 ```
 
-## Optional Dependencies
-
-Browser engines and the OpenAI client are optional — install only what you need:
+## Running Modes
 
 ```bash
-npm install playwright    # default engine (recommended)
-npm install puppeteer     # alternative Chromium engine
-npm install openai        # LLM-guided exploration (detection is always deterministic without it)
+npm start            # passive — read-only scan, safe for any public app
+npm start --active   # active  — enables form submission, payload injection, and authz replay
 ```
+
+**Passive mode (default):** navigates, clicks, and records HTTP/console errors. Never submits forms, injects XSS/SQLi payloads, or replays authenticated reads as an anonymous client. Safe to run against apps you don't own.
+
+**Active mode (`--active`):** enables `FORM_FILL`, `INPUT`, `UPLOAD`, and authz-replay probes. Only use against apps you own or have written permission to test.
 
 ## Bug Artifacts
 

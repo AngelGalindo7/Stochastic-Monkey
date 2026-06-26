@@ -2,19 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main]
-    paths:
-      - 'heuristic-monkey/**'
+    branches: [master]
   pull_request:
-    paths:
-      - 'heuristic-monkey/**'
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: heuristic-monkey
     steps:
       - uses: actions/checkout@v4
 
@@ -23,7 +16,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: heuristic-monkey/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install (skip Chromium download)
         run: npm install --ignore-scripts
@@ -33,5 +26,8 @@ jobs:
       - name: Run unit tests
         run: npm test
 
-      - name: Check publish bundle
-        run: npm pack --dry-run
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Integration smoke
+        run: PUPPETEER_SKIP_DOWNLOAD=true npx vitest run --config vitest.smoke.config.mjs tests/smoke/integration.test.mjs

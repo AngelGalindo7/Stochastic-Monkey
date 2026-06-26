@@ -29,17 +29,17 @@ export function buildSurprisePrompt({
   observed,
   hardSignals = [],
   recentActions = [],
-  recentStateIds = [],
+  recentStateIds = new Set(),
   currentStateId = null,
 }) {
   const observedJson = JSON.stringify(observed).slice(0, 4000);
   const recentList = recentActions.length
     ? recentActions.map((a, i) => `- ${i + 1}. ${a}`).join('\n')
     : '- (none)';
-  const recentIdsView = recentStateIds.length
-    ? JSON.stringify(recentStateIds.slice(-8))
+  const recentIdsView = recentStateIds.size
+    ? JSON.stringify([...recentStateIds].slice(-8))
     : '[]';
-  const repeated = Boolean(currentStateId) && recentStateIds.includes(currentStateId);
+  const repeated = Boolean(currentStateId) && recentStateIds.has(currentStateId);
 
   return [
     '# QA Surprise Evaluator',

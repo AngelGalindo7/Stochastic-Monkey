@@ -7,6 +7,63 @@ const REQUIRED = {
 
 const ALLOWED_GRANULARITIES = new Set(['fine', 'medium', 'coarse']);
 const ALLOWED_OTEL_EXPORTERS = new Set(['file', 'otlp', 'both']);
+const ALLOWED_ENGINES = new Set(['puppeteer', 'playwright']);
+
+function validateAuthBlock(block, prefix) {
+  if (block.cookies !== undefined) {
+    if (!Array.isArray(block.cookies)) {
+      throw new Error(`config: ${prefix}.cookies must be an array if provided`);
+    }
+    for (const [i, cookie] of block.cookies.entries()) {
+      if (!cookie || typeof cookie !== 'object') {
+        throw new Error(`config: ${prefix}.cookies[${i}] must be an object`);
+      }
+      if (!cookie.name || typeof cookie.value !== 'string') {
+        throw new Error(`config: ${prefix}.cookies[${i}] requires "name" and string "value"`);
+      }
+      if (!cookie.domain && !cookie.url) {
+        throw new Error(`config: ${prefix}.cookies[${i}] requires either "domain" or "url"`);
+      }
+    }
+  }
+
+  if (block.localStorage !== undefined) {
+    if (!block.localStorage || typeof block.localStorage !== 'object' || Array.isArray(block.localStorage)) {
+      throw new Error(`config: ${prefix}.localStorage must be an object map of string keys to string values`);
+    }
+    for (const [k, v] of Object.entries(block.localStorage)) {
+      if (typeof v !== 'string') {
+        throw new Error(`config: ${prefix}.localStorage["${k}"] must be a string`);
+      }
+    }
+  }
+
+  if (block.persistSession !== undefined && typeof block.persistSession !== 'boolean') {
+    throw new Error(`config: ${prefix}.persistSession must be a boolean if provided`);
+  }
+
+  if (block.refreshUrl !== undefined) {
+    if (typeof block.refreshUrl !== 'string' || !/^https?:\/\//i.test(block.refreshUrl)) {
+      throw new Error(`config: ${prefix}.refreshUrl must be an http(s) URL if provided`);
+    }
+  }
+
+  if (block.login !== undefined) {
+    const login = block.login;
+    if (!login || typeof login !== 'object' || Array.isArray(login)) {
+      throw new Error(`config: ${prefix}.login must be an object if provided`);
+    }
+    if (typeof login.url !== 'string' || !/^https?:\/\//i.test(login.url)) {
+      throw new Error(`config: ${prefix}.login.url must be an http(s) URL`);
+    }
+    if (typeof login.email !== 'string' || !login.email.length) {
+      throw new Error(`config: ${prefix}.login.email must be a non-empty string`);
+    }
+    if (typeof login.password !== 'string' || !login.password.length) {
+      throw new Error(`config: ${prefix}.login.password must be a non-empty string`);
+    }
+  }
+}
 
 export function validate(config) {
   if (!config || typeof config !== 'object') {
@@ -45,6 +102,22 @@ export function validate(config) {
     throw new Error(`config: observability.otel.exporter must be one of ${[...ALLOWED_OTEL_EXPORTERS].join(', ')}`);
   }
 
+  if (config.novelty?.nameDenylist !== undefined) {
+    if (!Array.isArray(config.novelty.nameDenylist)) {
+      throw new Error('config: novelty.nameDenylist must be an array of regex strings if provided');
+    }
+    for (const [i, pat] of config.novelty.nameDenylist.entries()) {
+      if (typeof pat !== 'string') {
+        throw new Error(`config: novelty.nameDenylist[${i}] must be a string`);
+      }
+      try {
+        new RegExp(pat);
+      } catch {
+        throw new Error(`config: novelty.nameDenylist[${i}] is not a valid regex: ${pat}`);
+      }
+    }
+  }
+
   if (typeof config.run.seed !== 'number') {
     throw new Error('config: run.seed must be a number');
   }
@@ -52,20 +125,89 @@ export function validate(config) {
     throw new Error('config: run.maxSteps must be a positive number');
   }
 
-  if (config.auth?.cookies !== undefined) {
-    if (!Array.isArray(config.auth.cookies)) {
-      throw new Error('config: auth.cookies must be an array if provided');
+  if (config.actions.filesPool !== undefined) {
+    if (!Array.isArray(config.actions.filesPool)) {
+      throw new Error('config: actions.filesPool must be an array if provided');
     }
-    for (const [i, cookie] of config.auth.cookies.entries()) {
-      if (!cookie || typeof cookie !== 'object') {
-        throw new Error(`config: auth.cookies[${i}] must be an object`);
+    for (const [i, entry] of config.actions.filesPool.entries()) {
+      if (!entry || typeof entry !== 'object') {
+        throw new Error(`config: actions.filesPool[${i}] must be an object`);
       }
-      if (!cookie.name || typeof cookie.value !== 'string') {
-        throw new Error(`config: auth.cookies[${i}] requires "name" and string "value"`);
+      if (typeof entry.path !== 'string' || !entry.path.length) {
+        throw new Error(`config: actions.filesPool[${i}] requires string "path"`);
       }
-      if (!cookie.domain && !cookie.url) {
-        throw new Error(`config: auth.cookies[${i}] requires either "domain" or "url"`);
+    }
+  }
+
+  if (config.auth !== undefined) {
+    validateAuthBlock(config.auth, 'auth');
+  }
+
+  if (config.browser?.engine !== undefined && !ALLOWED_ENGINES.has(config.browser.engine)) {
+    throw new Error(`config: browser.engine must be one of ${[...ALLOWED_ENGINES].join(', ')}`);
+  }
+
+  if (config.browser?.storageState !== undefined && typeof config.browser.storageState !== 'string') {
+    throw new Error('config: browser.storageState must be a string path if provided');
+  }
+
+  if (config.auth?.roles !== undefined) {
+    if (!config.auth.roles || typeof config.auth.roles !== 'object' || Array.isArray(config.auth.roles)) {
+      throw new Error('config: auth.roles must be an object map of role names to auth configs');
+    }
+    for (const [role, roleAuth] of Object.entries(config.auth.roles)) {
+      if (roleAuth === null) continue;
+      if (typeof roleAuth !== 'object' || Array.isArray(roleAuth)) {
+        throw new Error('config: auth.roles["' + role + '"] must be an object or null');
       }
+      validateAuthBlock(roleAuth, 'auth.roles["' + role + '"]');
+    }
+  }
+
+  const cl = config.oracle?.crossLayer;
+  if (cl !== undefined) {
+    if (cl.enabled !== undefined && typeof cl.enabled !== 'boolean') {
+      throw new Error('config: oracle.crossLayer.enabled must be a boolean if provided');
+    }
+    if (cl.pollAttempts !== undefined && (typeof cl.pollAttempts !== 'number' || cl.pollAttempts < 1)) {
+      throw new Error('config: oracle.crossLayer.pollAttempts must be a positive number if provided');
+    }
+    if (cl.pollDelayMs !== undefined && (typeof cl.pollDelayMs !== 'number' || cl.pollDelayMs < 0)) {
+      throw new Error('config: oracle.crossLayer.pollDelayMs must be a non-negative number if provided');
+    }
+    if (cl.goneStatuses !== undefined) {
+      if (!Array.isArray(cl.goneStatuses) || cl.goneStatuses.length === 0) {
+        throw new Error('config: oracle.crossLayer.goneStatuses must be a non-empty array if provided');
+      }
+      for (const [i, s] of cl.goneStatuses.entries()) {
+        if (typeof s !== 'number' || s < 100 || s > 599) {
+          throw new Error(`config: oracle.crossLayer.goneStatuses[${i}] must be a valid HTTP status code`);
+        }
+      }
+    }
+    if (cl.softDelete !== undefined && typeof cl.softDelete !== 'boolean') {
+      throw new Error('config: oracle.crossLayer.softDelete must be a boolean if provided');
+    }
+  }
+
+  const idem = config.oracle?.idempotency;
+  if (idem !== undefined) {
+    if (idem.enabled !== undefined && typeof idem.enabled !== 'boolean') {
+      throw new Error('config: oracle.idempotency.enabled must be a boolean if provided');
+    }
+    if (idem.keyHeaders !== undefined) {
+      if (!Array.isArray(idem.keyHeaders)) {
+        throw new Error('config: oracle.idempotency.keyHeaders must be an array if provided');
+      }
+      for (const [i, h] of idem.keyHeaders.entries()) {
+        if (typeof h !== 'string' || !h.length) {
+          throw new Error(`config: oracle.idempotency.keyHeaders[${i}] must be a non-empty string`);
+        }
+      }
+    }
+    if (idem.maxReplaysPerRun !== undefined &&
+        (typeof idem.maxReplaysPerRun !== 'number' || idem.maxReplaysPerRun < 1)) {
+      throw new Error('config: oracle.idempotency.maxReplaysPerRun must be a positive number if provided');
     }
   }
 

@@ -29,10 +29,24 @@ build/
 # Generated QA artefacts
 BUG/*/
 !BUG/.gitkeep
+FLAGGED/*/
+!FLAGGED/.gitkeep
+tests/smoke/BUG/
 repro.js
 crash-*.png
 dom-snapshot-*.html
 traces/
+
+# Mass-testing harness per-target output (generated configs, logs, BUG dirs)
+runs/
+
+# Persisted puppeteer profile (auth.persistSession=true). Contains cookies and
+# localStorage from prior runs — never commit, it leaks session tokens.
+.puppeteer-data/
+
+# Playwright storageState dumped by scripts/save-auth.mjs. Holds live session
+# cookies + localStorage — never commit, it leaks session tokens.
+auth-state.json
 
 # OS
 .DS_Store
@@ -56,3 +70,7 @@ Desktop.ini
 CLAUDE.md
 PROJECT_MAP.md
 docs/
+
+# Distributed coordinator/worker output
+runs-dist/
+runs-worker/

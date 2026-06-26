@@ -2,36 +2,79 @@ import 'dotenv/config';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import seedrandom from 'seedrandom';
 
 import { loadConfig } from './config/loader.js';
 import { createBrowser } from './browser/browserFactory.js';
-import { snapshotPage } from './perception/a11yTree.js';
+import { snapshotPage, getFileInputs } from './perception/a11yTree.js';
+import { pageEventsToHardSignals } from './perception/httpSignals.js';
 import { clusterId } from './agent/stateAbstraction.js';
 import { candidateActions, sampleByPrior } from './agent/policy.js';
 import { MctsNode, descend, backprop } from './agent/mcts.js';
-import { predict, surprise } from './agent/expectations.js';
+import { scoreState, HARD_SIGNALS } from './agent/expectations.js';
+import { checkDomFrozen, DOM_FROZEN_SETTLE_MS } from './agent/signals.js';
 import { initTelemetry, shutdownTelemetry, getTracer } from './observability/otel.js';
 import { Breadcrumbs } from './observability/breadcrumbs.js';
-import { writeBugReport } from './triage/triage.js';
+import { writeBugReport, writeFlaggedReport } from './triage/triage.js';
 import { runClick } from './actions/click.js';
 import { runInput } from './actions/input.js';
 import { runNavigate } from './actions/navigate.js';
 import { runScroll } from './actions/scroll.js';
 import { runBack, runForward, runRefresh } from './actions/history.js';
 import { runMacro } from './actions/macro.js';
+import { runUpload } from './actions/upload.js';
+import { runFormFill } from './actions/formFill.js';
+import { detectFillableForms } from './perception/forms.js';
+import { checkCrossLayer } from './agent/oracles/crossLayer.js';
+import { checkIdempotency } from './agent/oracles/idempotency.js';
+import { checkBrokenImages } from './agent/oracles/structural.js';
+import { checkAuthzReplay } from './agent/oracles/authzReplay.js';
+import { checkSecurityHeaders } from './agent/oracles/securityHeaders.js';
+import { checkCookieSecurity } from './agent/oracles/cookieSecurity.js';
+import { checkInfoDisclosure } from './agent/oracles/infoDisclosure.js';
+import { sharedJarClient, isolatedClient } from './agent/apiClient.js';
+import { writeSummaryReport } from './triage/summaryReport.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname).replace(/^\//, ''), '..');
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs(argv) {
-  const out = { configPath: 'config.yaml' };
+  const out = { configPath: 'config.yaml', active: false, url: null };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--config' && argv[i + 1]) {
       out.configPath = argv[i + 1];
       i++;
+    } else if (argv[i] === '--active') {
+      out.active = true;
+    } else if (argv[i] === '--url' && argv[i + 1]) {
+      out.url = argv[i + 1];
+      i++;
     }
   }
   return out;
+}
+
+function applyPassivePatch(config) {
+  config.actions.weights.INPUT = 0;
+  config.actions.weights.FORM_FILL = 0;
+  config.actions.weights.UPLOAD = 0;
+
+  // First layer: macros never fire.
+  if (config.macros) config.macros.fireProbability = 0;
+
+  // Second layer: strip write-capable steps from every macro so they cannot
+  // execute even if a macro is dispatched through a future direct call path.
+  const PASSIVE_BLOCKED = new Set(['INPUT', 'UPLOAD', 'FORM_FILL']);
+  for (const macro of config.macros?.list ?? []) {
+    macro.steps = macro.steps.filter((s) => !PASSIVE_BLOCKED.has(s.type));
+  }
+
+  // Upsert oracle blocks unconditionally — a conditional write silently skips
+  // when the key is absent from config.yaml, leaving the oracle enabled.
+  config.oracle ??= {};
+  config.oracle.authzReplay   = { ...(config.oracle.authzReplay   ?? {}), enabled: false };
+  config.oracle.crossLayer    = { ...(config.oracle.crossLayer    ?? {}), enabled: false };
+  config.oracle.idempotency   = { ...(config.oracle.idempotency   ?? {}), enabled: false };
 }
 
 function makeRunId(seed) {
@@ -39,7 +82,7 @@ function makeRunId(seed) {
   return crypto.createHash('sha1').update(`${seed}-${ts}`).digest('hex').slice(0, 8);
 }
 
-async function executeAction({ action, page, config, rng, breadcrumbs }) {
+async function executeAction({ action, page, config, rng, breadcrumbs, sentinel }) {
   const currentUrl = page.raw.url();
   switch (action.type) {
     case 'CLICK':
@@ -47,7 +90,7 @@ async function executeAction({ action, page, config, rng, breadcrumbs }) {
     case 'INPUT':
       return runInput({ page, target: action.target, dataPool: config.actions.dataPool ?? [], rng });
     case 'NAVIGATION':
-      return runNavigate({ page, allowedDomains: config.target.allowedDomains, currentUrl });
+      return runNavigate({ page, allowedDomains: config.target.allowedDomains, currentUrl, rng });
     case 'SCROLL':
       return runScroll({ page, rng });
     case 'BACK':
@@ -57,10 +100,37 @@ async function executeAction({ action, page, config, rng, breadcrumbs }) {
     case 'REFRESH':
       return runRefresh({ page });
     case 'MACRO':
-      return runMacro({ macro: action.macro, page, config, rng, breadcrumbs });
+      return runMacro({ macro: action.macro, page, config, rng, breadcrumbs, projectRoot: PROJECT_ROOT });
+    case 'UPLOAD':
+      return runUpload({
+        page,
+        target: action.target,
+        filesPool: config.actions.filesPool ?? [],
+        rng,
+        projectRoot: PROJECT_ROOT,
+      });
+    case 'FORM_FILL':
+      return runFormFill({ page, target: action.target, rng, sentinel });
     default:
       return { success: false, error: `unknown action ${action.type}` };
   }
+}
+
+// Per-step watchdog. A single action can hang indefinitely — e.g. a CLICK that
+// triggers an off-domain navigation which destroys the execution context, after
+// which the next CDP/page call never resolves. Racing the step body against a
+// timeout lets the run abort the stuck step instead of hanging until an external
+// kill. The rejection is tagged so the loop can distinguish it from real errors.
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`watchdog: ${label} exceeded ${ms}ms`);
+      err.__watchdog = true;
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function pickMacro(macros, rng) {
@@ -74,91 +144,189 @@ function pickMacro(macros, rng) {
   return macros[macros.length - 1];
 }
 
-const NOISE_PATTERNS = [
-  /\/favicon\.ico$/i,
-  /google-analytics\.com/i,
-  /googletagmanager\.com/i,
-  /doubleclick\.net/i,
-  /facebook\.com\/tr/i,
-];
-
-function isNoiseUrl(url) {
-  if (!url) return false;
-  return NOISE_PATTERNS.some((re) => re.test(url));
-}
-
-function pageEventsToHardSignals(events) {
-  const out = [];
-  const evidence = [];
-  for (const e of events) {
-    if (e.type === 'PAGEERROR') {
-      out.push('PAGEERROR');
-      evidence.push({ signal: 'PAGEERROR', detail: e.message });
-    } else if (e.type === 'HTTP_5XX') {
-      out.push('HTTP_5XX');
-      evidence.push({ signal: 'HTTP_5XX', detail: `${e.status} ${e.url}` });
-    } else if ((e.type === 'HTTP_4XX' || e.type === 'REQUEST_FAILED') && !isNoiseUrl(e.url)) {
-      out.push('ASSET_4XX');
-      evidence.push({ signal: 'ASSET_4XX', detail: `${e.status ?? 'fail'} ${e.url}` });
-    }
-  }
-  return { signals: out, evidence };
-}
-
-async function main() {
-  const args = parseArgs(process.argv);
-  const seedSource = process.env.HEURISTIC_SEED ?? null;
-
-  const preConfig = loadConfig({ configPath: args.configPath });
-  const seed = seedSource !== null ? Number(seedSource) : preConfig.run.seed;
-  const runId = makeRunId(seed);
-
-  const config = loadConfig({ configPath: args.configPath, runId });
-
-  const tracer = initTelemetry({ runId, seed, otelConfig: config.observability?.otel });
-  const breadcrumbs = new Breadcrumbs({
-    filePath: config.observability?.breadcrumbs?.path,
-    enabled: config.observability?.breadcrumbs?.enabled !== false,
-  });
-
-  breadcrumbs.record('run.start', `run ${runId} seed=${seed} target=${config.target.url}`);
-
-  const rng = seedrandom(String(seed));
-  const browser = await createBrowser({
-    preferLightpanda: true,
-    headful: process.env.HEADFUL === 'true',
-  });
-  const page = await browser.newPage();
-
-  const root = new MctsNode({ stateId: 'ROOT' });
+// Runs one crawl arm (authenticated or anon) to completion.
+// Returns { firstBug, firstFlagged, fatalError, bugs, flagged }. Closes breadcrumbs; caller closes browser.
+async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, stepsDir, targetOrigin, sentinel }) {
+  const engine = config.browser?.engine ?? 'playwright';
   let firstBug = null;
-
-  const stepsDir = path.resolve(PROJECT_ROOT, config.triage?.bugRoot ?? 'BUG', runId, 'steps');
-  fs.mkdirSync(stepsDir, { recursive: true });
+  let firstFlagged = null;
+  let fatalError = null;
+  const bugs = [];
+  const flagged = [];
 
   try {
-    if (config.auth?.cookies?.length) {
-      await page.raw.setCookie(...config.auth.cookies);
-      breadcrumbs.record('auth', `injected ${config.auth.cookies.length} cookie(s)`);
+    if (role !== 'anon') {
+      // Cookie + localStorage seeding for authenticated roles only.
+      const configCookies = config.auth?.cookies ?? [];
+      const existingCookies = await page.raw.cookies(config.target.url);
+      const existingNames = new Set(existingCookies.map((c) => c.name));
+      const needsCookieSeed = configCookies.some((c) => !existingNames.has(c.name));
+
+      if (configCookies.length && needsCookieSeed) {
+        const loginCfg = config.auth?.login;
+        if (loginCfg?.email) {
+          // Credentials login: POST to the backend's login endpoint, parse the
+          // Set-Cookie response, and fill the values into the cookie templates
+          // declared above. Removes the manual refresh_token paste — the response
+          // is already a fresh access/refresh pair, so pre-refresh is skipped.
+          // See DECISION_LOG 010.
+          const res = await fetch(loginCfg.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: loginCfg.email, password: loginCfg.password }),
+          });
+          if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            const hint = res.status === 429
+              ? ' (rate limit: /users/login allows 5/min, 20/hour per IP)'
+              : '';
+            breadcrumbs.record('auth.error', `login ${res.status}: ${body.slice(0, 160)}`);
+            console.error(
+              `\n[auth] Login failed (${res.status})${hint}.\n` +
+                `Check auth.login in config.yaml. Server said:\n  ${body.slice(0, 240)}\n`,
+            );
+            throw new Error('login failed; aborting before SPA boot');
+          }
+          const setCookies = res.headers.getSetCookie?.() ?? [];
+          const rotated = {};
+          for (const sc of setCookies) {
+            const [pair] = sc.split(';');
+            const eq = pair.indexOf('=');
+            if (eq > 0) rotated[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+          }
+          const seeded = configCookies
+            .filter((c) => rotated[c.name] !== undefined)
+            .map((c) => ({ ...c, value: rotated[c.name] }));
+          if (!seeded.length) {
+            throw new Error('login ok but no matching cookies in Set-Cookie response');
+          }
+          await page.raw.setCookie(...seeded);
+          breadcrumbs.record('auth', `login ok; seeded ${seeded.length} cookie(s)`);
+        } else {
+          await page.raw.setCookie(...configCookies);
+          breadcrumbs.record('auth', `injected ${configCookies.length} cookie(s)`);
+
+          // Pre-refresh: when seeding from config, immediately rotate the tokens
+          // via the backend's refresh endpoint BEFORE the SPA boots its own refresh.
+          // Shrinks the race window between "you pasted the token" and "the SPA
+          // burns it" — if the configured refresh token is already revoked, we fail
+          // here with a clear error rather than a confusing /Login bounce later.
+          if (config.auth?.refreshUrl) {
+            const cookieHeader = configCookies.map((c) => `${c.name}=${c.value}`).join('; ');
+            const res = await fetch(config.auth.refreshUrl, {
+              method: 'POST',
+              headers: { Cookie: cookieHeader },
+            });
+            if (!res.ok) {
+              const body = await res.text().catch(() => '');
+              breadcrumbs.record('auth.error', `pre-refresh ${res.status}: ${body.slice(0, 160)}`);
+              console.error(
+                `\n[auth] Pre-refresh failed (${res.status}). Your configured refresh_token is dead.\n` +
+                  `Paste a fresh one into config.yaml and run again. Server said:\n  ${body.slice(0, 240)}\n`,
+              );
+              throw new Error('pre-refresh failed; aborting before SPA boot');
+            }
+            const setCookies = res.headers.getSetCookie?.() ?? [];
+            const rotated = {};
+            for (const sc of setCookies) {
+              const [pair] = sc.split(';');
+              const eq = pair.indexOf('=');
+              if (eq > 0) rotated[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+            }
+            const updated = configCookies
+              .filter((c) => rotated[c.name] !== undefined)
+              .map((c) => ({ ...c, value: rotated[c.name] }));
+            if (updated.length) {
+              await page.raw.setCookie(...updated);
+              breadcrumbs.record('auth', `pre-refresh ok; rotated ${updated.length} cookie(s) in jar`);
+            } else {
+              breadcrumbs.record('auth', 'pre-refresh ok; no Set-Cookie in response');
+            }
+          }
+        }
+      } else if (configCookies.length) {
+        breadcrumbs.record('auth', `reusing ${configCookies.length} persisted cookie(s)`);
+      }
     }
 
     await page.raw.goto(config.target.url, {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000,
+      waitUntil: engine === 'playwright' ? 'networkidle' : 'networkidle2',
+      timeout: 30000,
     });
+
+    if (role !== 'anon') {
+      const lsEntries = Object.entries(config.auth?.localStorage ?? {});
+      if (lsEntries.length) {
+        const presentKeys = await page.raw.evaluate(
+          (keys) => keys.filter((k) => localStorage.getItem(k) !== null),
+          lsEntries.map(([k]) => k),
+        );
+        if (presentKeys.length < lsEntries.length) {
+          await page.raw.evaluate((entries) => {
+            for (const [k, v] of entries) localStorage.setItem(k, v);
+          }, lsEntries);
+          await page.raw.goto(config.target.url, { waitUntil: engine === 'playwright' ? 'networkidle' : 'networkidle2', timeout: 30000 });
+          breadcrumbs.record('auth', `seeded ${lsEntries.length} localStorage key(s); re-navigated`);
+        } else {
+          breadcrumbs.record('auth', `reusing ${lsEntries.length} persisted localStorage key(s)`);
+        }
+      }
+    }
+
+    await page.raw
+      .waitForFunction(
+        () => document.body && document.body.querySelectorAll('a, button, input, [role]').length > 0,
+        { timeout: 10000 },
+      )
+      .catch(() => {});
     breadcrumbs.record('navigate', `goto ${config.target.url}`);
+
+    // One-shot cookie-flag check for authenticated arms (DECISION_LOG 018).
+    if (role !== 'anon') {
+      const ckResult = await checkCookieSecurity(page.raw, config.target.url);
+      if (ckResult.signal) {
+        const ckFlagged = await writeFlaggedReport({
+          rootDir: PROJECT_ROOT,
+          bugRoot: config.triage?.flaggedRoot ?? 'FLAGGED',
+          seed,
+          severity: HARD_SIGNALS.INSECURE_COOKIES.severity,
+          signal: ckResult.signal,
+          reason: ckResult.detail ?? '',
+          pageUrl: config.target.url,
+          breadcrumbs: breadcrumbs.all(),
+          evidence: [{ signal: ckResult.signal, detail: ckResult.detail }],
+          config,
+        });
+        if (!firstFlagged) firstFlagged = ckFlagged;
+        flagged.push({ folderRel: ckFlagged.folderRel, signal: ckResult.signal, severity: HARD_SIGNALS.INSECURE_COOKIES.severity, pageUrl: config.target.url });
+        breadcrumbs.record('flag.write', `cookies: ${ckFlagged.folderRel}`);
+      }
+    }
 
     const macroFireProb = config.macros?.fireProbability ?? 0;
     const macroList = config.macros?.list ?? [];
-    const recentStateIds = [];
+    const stepTimeoutMs = config.run?.stepTimeoutMs ?? 10000;
+    const recentStateIds = new Set();
+    const noveltyDenylist = (config.novelty?.nameDenylist ?? []).map((s) => new RegExp(s, 'i'));
+    let prevA11y = null;
+    let prevUrl = null;
+
+    const root = new MctsNode({ stateId: 'ROOT' });
+    // Shared mutable counter — initialized once per arm so the cap applies across all steps.
+    const idempotencyReplayCount = { value: 0 };
 
     for (let step = 0; step < config.run.maxSteps; step++) {
       const a11y = await snapshotPage(page.raw);
+      const preActionUrl = page.raw.url();
+      const fileInputs = await getFileInputs(page.raw);
+      const forms = await detectFillableForms(page.raw);
       const stateId = clusterId(a11y, config.mcts.abstractionGranularity);
-      recentStateIds.push(stateId);
+      recentStateIds.add(stateId);
       const cands = candidateActions(a11y, {
         weights: config.actions.weights,
         blockedSelectors: config.target.blockedSelectors,
+        fileInputs,
+        forms,
       });
       if (cands.length === 0) {
         breadcrumbs.record('warn', 'no candidate actions; ending run');
@@ -189,24 +357,21 @@ async function main() {
       breadcrumbs.record('action', `step=${step} ${desc}`);
 
       const beforeEvents = page.events.length;
-      let prediction = null;
+      const beforeCaptures = page.captures?.length ?? 0;
       let result = { success: false };
       let surpriseResult = null;
       let hardEvidenceOuter = [];
+      let observedForPrev = null;
+      let observedUrlForPrev = null;
 
-      const recentActions = breadcrumbs
-        .all()
-        .filter((b) => b.type === 'action')
-        .slice(-5)
-        .map((b) => b.summary);
-
-      await tracer.startActiveSpan(
+      let stepWatchdogFired = false;
+      try {
+        await withTimeout(
+          tracer.startActiveSpan(
         'mcts.expand',
-        { attributes: { step, 'state.id': stateId, action: action.type } },
+        { attributes: { step, 'state.id': stateId, action: action.type, arm: role } },
         async (span) => {
-          prediction = await predict({ a11yTree: a11y, action, recentActions, llmConfig: config.llm });
-          span.setAttribute('llm.prediction', prediction.slice(0, 240));
-          result = await executeAction({ action, page, config, rng, breadcrumbs });
+          result = await executeAction({ action, page, config, rng, breadcrumbs, sentinel });
           span.setAttribute('action.success', result.success);
           span.setAttribute('action.latency_ms', result.latencyMs ?? 0);
           await new Promise((r) => setTimeout(r, config.run.humanDelayMs ?? 0));
@@ -219,103 +384,394 @@ async function main() {
           }
 
           const newEvents = page.events.slice(beforeEvents);
+          // Skip DOM_FROZEN when the action triggered a navigation — an empty
+          // body mid-transition is expected, not a blank-screen regression.
+          const postActionUrl = page.raw.url();
+          if (postActionUrl === preActionUrl && await checkDomFrozen(page, { settleMs: DOM_FROZEN_SETTLE_MS })) {
+            newEvents.push({ type: 'DOM_FROZEN' });
+          }
+          const newCaptures = page.captures?.slice(beforeCaptures) ?? [];
           const observed = await snapshotPage(page.raw).catch(() => null);
+          const observedUrl = page.raw.url();
+          observedForPrev = observed;
+          observedUrlForPrev = observedUrl;
           const observedStateId = observed
             ? clusterId(observed, config.mcts.abstractionGranularity)
             : null;
           const { signals: hardSignals, evidence: hardEvidence } =
-            pageEventsToHardSignals(newEvents);
+            pageEventsToHardSignals(newEvents, targetOrigin, config.target.allowedDomains);
           hardEvidenceOuter = hardEvidence;
-          if (result.latencyMs > config.run.thresholdMs) hardSignals.push('PERF_BREACH');
 
-          surpriseResult = await surprise({
-            prediction,
+          // sharedJarClient needs page.context().request (Playwright only). On the
+          // Puppeteer fallback arm it returns null, so skip the cross-layer oracle
+          // rather than throw mid-step.
+          const clClient = sharedJarClient(page.raw);
+          const clResult = clClient
+            ? await checkCrossLayer({
+                captures: newCaptures,
+                client: clClient,
+                allowedDomains: config.target.allowedDomains,
+                config: config.oracle?.crossLayer,
+              })
+            : { signal: null };
+          if (clResult.signal) {
+            hardSignals.push(clResult.signal);
+            hardEvidence.push({ signal: clResult.signal, detail: clResult.detail });
+          }
+
+          const idempResult = clClient
+            ? await checkIdempotency({
+                captures: newCaptures,
+                client: clClient,
+                allowedDomains: config.target.allowedDomains,
+                config: config.oracle?.idempotency,
+                replayCount: idempotencyReplayCount,
+              })
+            : { signal: null };
+          if (idempResult.signal) {
+            hardSignals.push(idempResult.signal);
+            hardEvidence.push({ signal: idempResult.signal, detail: idempResult.detail });
+          }
+
+          const brResult = await checkBrokenImages(page, targetOrigin, config.target.allowedDomains);
+          if (brResult.signal) {
+            hardSignals.push(brResult.signal);
+            hardEvidence.push({ signal: brResult.signal, detail: brResult.detail });
+          }
+
+          const idResult = checkInfoDisclosure(newCaptures);
+          if (idResult.signal) {
+            hardSignals.push(idResult.signal);
+            hardEvidence.push({ signal: idResult.signal, detail: idResult.detail });
+          }
+
+          surpriseResult = scoreState({
             observed,
+            prevA11y: prevA11y ?? a11y,
+            currentUrl: observedUrl,
+            prevUrl: prevUrl ?? preActionUrl,
             hardSignals,
-            recentActions,
             recentStateIds,
             currentStateId: observedStateId,
-            llmConfig: config.llm,
+            lowSignalExtra: noveltyDenylist,
           });
-          span.setAttribute('surprise.score', surpriseResult.score);
+          span.setAttribute('captures.count', newCaptures.length);
+          span.setAttribute('novelty.score', surpriseResult.score);
           span.setAttribute('surprise.severity', surpriseResult.severity);
-          span.setAttribute('surprise.hard_override', surpriseResult.hardSignalOverride);
+          span.setAttribute('surprise.is_bug', surpriseResult.isBug);
           if (surpriseResult.signalType) {
             span.setAttribute('surprise.signal', surpriseResult.signalType);
           }
           span.end();
         },
-      );
+          ),
+          stepTimeoutMs,
+          `step ${step} (${action.type})`,
+        );
+      } catch (err) {
+        if (err && err.__watchdog) {
+          breadcrumbs.record('warn', `step ${step} watchdog fired: ${err.message}; ending run`);
+          break;
+        }
+        throw err;
+      }
 
       backprop(node, surpriseResult.score);
+      prevA11y = observedForPrev ?? prevA11y;
+      prevUrl = observedUrlForPrev ?? prevUrl;
 
       const currentUrl = page.raw.url();
       const isNoiseLocation = currentUrl === 'about:blank' || currentUrl === '';
 
-      if (
-        (surpriseResult.score >= 0.85 || surpriseResult.hardSignalOverride) &&
-        !isNoiseLocation
-      ) {
+      if (surpriseResult.isBug && !isNoiseLocation) {
         const screenshotBuffer = await page.raw
           .screenshot({ fullPage: true, type: 'png' })
           .catch(() => null);
         const domHtml = await page.raw.content().catch(() => '');
-        firstBug = await writeBugReport({
+        const bugSignal = surpriseResult.signalType ?? surpriseResult.reason ?? 'unknown_signal';
+        const bugResult = await writeBugReport({
           rootDir: PROJECT_ROOT,
           bugRoot: config.triage?.bugRoot ?? 'BUG',
           seed,
           severity: surpriseResult.severity,
-          signal: surpriseResult.signalType ?? surpriseResult.reason ?? 'llm_divergence',
+          signal: bugSignal,
           pageUrl: currentUrl,
           breadcrumbs: breadcrumbs.all(),
           screenshotBuffer,
           domHtml,
           surpriseScore: surpriseResult.score,
-          prediction,
           evidence: hardEvidenceOuter,
           tracePath: config.observability?.otel?.path,
           stepsDirRel: path.relative(PROJECT_ROOT, stepsDir),
           config,
         });
-        breadcrumbs.record('bug.write', `wrote ${firstBug.folderRel}`);
+        if (!firstBug) firstBug = bugResult;
+        bugs.push({ folderRel: bugResult.folderRel, signal: bugSignal, severity: surpriseResult.severity, pageUrl: currentUrl });
+        breadcrumbs.record('bug.write', `wrote ${bugResult.folderRel}`);
         if (config.run.stopOnFirstBug) break;
-      } else if (
-        (surpriseResult.score >= 0.85 || surpriseResult.hardSignalOverride) &&
-        isNoiseLocation
-      ) {
+      } else if (surpriseResult.isBug && isNoiseLocation) {
         breadcrumbs.record(
           'bug.skipped',
           `skipped: page is at "${currentUrl}" (back-from-fresh artifact, not a real bug)`,
         );
+      } else if (surpriseResult.needsReview && !isNoiseLocation) {
+        const screenshotBuffer = await page.raw
+          .screenshot({ fullPage: true, type: 'png' })
+          .catch(() => null);
+        const domHtml = await page.raw.content().catch(() => '');
+        const flagSignal = surpriseResult.signalType ?? surpriseResult.reason ?? 'unknown_signal';
+        const flaggedResult = await writeFlaggedReport({
+          rootDir: PROJECT_ROOT,
+          bugRoot: config.triage?.flaggedRoot ?? 'FLAGGED',
+          seed,
+          severity: surpriseResult.severity,
+          signal: flagSignal,
+          reason: surpriseResult.reason ?? '',
+          pageUrl: currentUrl,
+          breadcrumbs: breadcrumbs.all(),
+          screenshotBuffer,
+          domHtml,
+          surpriseScore: surpriseResult.score,
+          evidence: hardEvidenceOuter,
+          tracePath: config.observability?.otel?.path,
+          stepsDirRel: path.relative(PROJECT_ROOT, stepsDir),
+          config,
+        });
+        if (!firstFlagged) firstFlagged = flaggedResult;
+        flagged.push({ folderRel: flaggedResult.folderRel, signal: flagSignal, severity: surpriseResult.severity, pageUrl: currentUrl });
+        breadcrumbs.record('flag.write', `wrote ${flaggedResult.folderRel}`);
       }
     }
   } catch (err) {
     breadcrumbs.record('error', err.message, { stack: err.stack });
-    if (!firstBug) {
-      firstBug = await writeBugReport({
+    const tookActions = breadcrumbs.all().some((b) => b.type === 'action');
+    if (!firstBug && tookActions) {
+      const crashSignal = `agent_crash: ${err.message}`;
+      const crashUrl = page?.raw?.url?.() ?? config.target.url;
+      const crashBug = await writeBugReport({
         rootDir: PROJECT_ROOT,
         bugRoot: config.triage?.bugRoot ?? 'BUG',
         seed,
         severity: 'high',
-        signal: `agent_crash: ${err.message}`,
-        pageUrl: page?.raw?.url?.() ?? config.target.url,
+        signal: crashSignal,
+        pageUrl: crashUrl,
         breadcrumbs: breadcrumbs.all(),
         config,
       });
+      firstBug = crashBug;
+      bugs.push({ folderRel: crashBug.folderRel, signal: crashSignal, severity: 'high', pageUrl: crashUrl });
+    } else if (!firstBug) {
+      // No bug AND no action taken — the run aborted inside the harness itself
+      // (perception/auth threw on step 0). That is a broken run, not a clean
+      // "no bug found"; surface it rather than masking it as a success exit.
+      fatalError = err;
     }
   } finally {
-    breadcrumbs.record('run.end', firstBug ? `bug: ${firstBug.folderRel}` : 'no bug found');
+    breadcrumbs.record(
+      'run.end',
+      firstBug ? `bug: ${firstBug.folderRel}` : firstFlagged ? `flagged: ${firstFlagged.folderRel}` : 'no bug found',
+    );
     await breadcrumbs.close();
+  }
+
+  return { firstBug, firstFlagged, fatalError, bugs, flagged };
+}
+
+async function main() {
+  const startMs = Date.now();
+  const args = parseArgs(process.argv);
+  const seedSource = process.env.HEURISTIC_SEED ?? null;
+
+  const preConfig = loadConfig({ configPath: args.configPath });
+  const seed = seedSource !== null ? Number(seedSource) : preConfig.run.seed;
+  const runId = makeRunId(seed);
+  // Unique per-seed marker embedded in FORM_FILL text fields; lets the authz oracle
+  // prove identity-grounded CROSS_ACCOUNT_LEAK (vs. the weaker AUTHZ_UNCERTAIN) when
+  // this specific value comes back in an unauthenticated replay (DECISION_LOG 017).
+  const runSentinel = 'mhk-' + crypto.createHash('sha1').update('sentinel:' + String(seed)).digest('hex').slice(0, 12);
+
+  const config = loadConfig({ configPath: args.configPath, runId });
+
+  if (!args.active) applyPassivePatch(config);
+  if (args.url) config.target.url = args.url;
+
+  if (!args.active) {
+    process.stderr.write(`[passive mode] Read-only scan of ${config.target.url} — run with --active to enable writes.\n`);
+  } else {
+    process.stderr.write(`[active mode] Scanning ${config.target.url} — form submission, payload injection, and authz replay enabled.\n`);
+  }
+
+  const tracer = initTelemetry({ runId, seed, otelConfig: config.observability?.otel });
+
+  let targetOrigin = '';
+  try { targetOrigin = new URL(config.target.url).origin; } catch { /* invalid url */ }
+
+  const persistSession = config.auth?.persistSession === true;
+  const engine = config.browser?.engine ?? 'playwright';
+  const browser = await createBrowser({
+    engine,
+    preferLightpanda: engine === 'puppeteer',
+    headful: process.env.HEADFUL === 'true',
+    userDataDir: persistSession ? path.resolve(PROJECT_ROOT, engine === 'playwright' ? '.playwright-data' : '.puppeteer-data') : undefined,
+    storageState: config.browser?.storageState,
+    roles: config.auth?.roles,
+  });
+
+  // Determine which roles to run. Defaults to ['user'] for backwards compat
+  // when no roles are configured; expands to all declared roles otherwise.
+  const declaredRoles = config.auth?.roles ? Object.keys(config.auth.roles) : ['user'];
+
+  let combinedFirstBug = null;
+  let combinedFirstFlagged = null;
+  let combinedFatalError = null;
+  let userCaptures = null;
+  const allBugs = [];
+  const allFlagged = [];
+
+  try {
+    // One-shot security-header probe (DECISION_LOG 018). Runs before any arm so
+    // the finding appears in results even if the crawl itself finds nothing.
+    const shResult = await checkSecurityHeaders(config.target.url);
+    if (shResult.signal) {
+      const shFlagged = await writeFlaggedReport({
+        rootDir: PROJECT_ROOT,
+        bugRoot: config.triage?.flaggedRoot ?? 'FLAGGED',
+        seed,
+        severity: HARD_SIGNALS.MISSING_SECURITY_HEADERS.severity,
+        signal: shResult.signal,
+        reason: shResult.detail ?? '',
+        pageUrl: config.target.url,
+        breadcrumbs: [],
+        evidence: [{ signal: shResult.signal, detail: shResult.detail }],
+        config,
+      });
+      if (!combinedFirstFlagged) combinedFirstFlagged = shFlagged;
+      allFlagged.push({ folderRel: shFlagged.folderRel, signal: shResult.signal, severity: HARD_SIGNALS.MISSING_SECURITY_HEADERS.severity, pageUrl: config.target.url });
+      console.log(`\nFLAGGED (security headers): ${shFlagged.folderRel}`);
+    }
+
+    for (const role of declaredRoles) {
+      const page = await browser.newPage(role);
+      const armSuffix = role === 'user' ? '' : `-${role}`;
+
+      const bcBasePath = config.observability?.breadcrumbs?.path ?? `BUG/${runId}/breadcrumbs.jsonl`;
+      let bcPath = bcBasePath;
+      if (armSuffix) {
+        const { dir, name, ext } = path.parse(bcBasePath);
+        bcPath = path.join(dir, `${name}${armSuffix}${ext || '.jsonl'}`);
+      }
+
+      const breadcrumbs = new Breadcrumbs({
+        filePath: bcPath,
+        enabled: config.observability?.breadcrumbs?.enabled !== false,
+      });
+
+      const stepsDir = path.resolve(
+        PROJECT_ROOT,
+        config.triage?.bugRoot ?? 'BUG',
+        runId,
+        role === 'user' ? 'steps' : `steps-${role}`,
+      );
+      fs.mkdirSync(stepsDir, { recursive: true });
+
+      // Each arm gets a fresh rng from the same seed for reproducible per-arm
+      // action sequences; arms are independent crawls of the same target.
+      const rng = seedrandom(String(seed));
+
+      breadcrumbs.record('run.start', `run ${runId} arm=${role} seed=${seed} target=${config.target.url}`);
+      console.log(`\n[run] arm=${role} seed=${seed}`);
+
+      const { firstBug, firstFlagged, fatalError, bugs: armBugs, flagged: armFlagged } = await runArm({
+        role,
+        page,
+        seed,
+        config,
+        rng,
+        tracer,
+        breadcrumbs,
+        stepsDir,
+        targetOrigin,
+        sentinel: runSentinel,
+      });
+
+      if (firstBug && !combinedFirstBug) combinedFirstBug = firstBug;
+      if (firstFlagged && !combinedFirstFlagged) combinedFirstFlagged = firstFlagged;
+      if (fatalError && !combinedFatalError) combinedFatalError = fatalError;
+      if (role === 'user') userCaptures = page.captures ?? null;
+      allBugs.push(...armBugs);
+      allFlagged.push(...armFlagged);
+    }
+
+    // Anonymous read-replay (authz / RLS) check. Replays what the authenticated user
+    // read, as an unauthenticated client, and flags any owned record that comes back
+    // without the user token. Flag-for-review only; wrapped so it never crashes a run.
+    const azConfig = config.oracle?.authzReplay;
+    if (userCaptures?.length && azConfig?.enabled !== false) {
+      try {
+        const replay = await isolatedClient();
+        try {
+          const az = await checkAuthzReplay({
+            reads: userCaptures,
+            replay,
+            allowedDomains: config.target.allowedDomains,
+            config: azConfig,
+            sentinel: runSentinel,
+          });
+          if (az.signal) {
+            const azSeverity = HARD_SIGNALS[az.signal]?.severity ?? 'low';
+            const flagged = await writeFlaggedReport({
+              rootDir: PROJECT_ROOT,
+              bugRoot: config.triage?.flaggedRoot ?? 'FLAGGED',
+              seed,
+              severity: azSeverity,
+              signal: az.signal,
+              reason: az.reason ?? '',
+              pageUrl: config.target.url,
+              breadcrumbs: [],
+              evidence: [{ signal: az.signal, detail: az.detail }],
+              config,
+            });
+            if (!combinedFirstFlagged) combinedFirstFlagged = flagged;
+            allFlagged.push({ folderRel: flagged.folderRel, signal: az.signal, severity: azSeverity, pageUrl: config.target.url });
+            console.log(`\nFLAGGED (authz): ${flagged.folderRel}`);
+          }
+        } finally {
+          await replay.close().catch(() => {});
+        }
+      } catch (err) {
+        console.error(`[authz] replay check skipped: ${err.message}`);
+      }
+    }
+  } finally {
     await browser.close().catch(() => {});
     await shutdownTelemetry();
   }
 
-  if (firstBug) {
-    console.log(`\nBUG: ${firstBug.folderRel}`);
+  const summaryPath = writeSummaryReport({
+    rootDir: PROJECT_ROOT,
+    runId,
+    seed,
+    targetUrl: config.target.url,
+    mode: args.active ? 'active' : 'passive',
+    bugs: allBugs,
+    flagged: allFlagged,
+    durationMs: Date.now() - startMs,
+  });
+  console.log(`\nSUMMARY: ${summaryPath}`);
+
+  if (combinedFirstBug) {
+    console.log(`\nBUG: ${combinedFirstBug.folderRel}`);
     process.exitCode = 0;
+  } else if (combinedFatalError) {
+    console.error(`\n[fatal] run ${runId} aborted before the first action: ${combinedFatalError.message}`);
+    if (combinedFatalError.stack) console.error(combinedFatalError.stack);
+    process.exitCode = 1;
   } else {
     console.log(`\nrun ${runId} completed without surfacing a bug.`);
     process.exitCode = 0;
+  }
+  if (combinedFirstFlagged) {
+    console.log(`FLAGGED: ${combinedFirstFlagged.folderRel}`);
   }
 }
 

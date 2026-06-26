@@ -1,4 +1,5 @@
 import { launchPuppeteer } from './puppeteer.js';
+import { launchPlaywright } from './playwright.js';
 import { launchLightpanda, NotImplementedError } from './lightpanda.js';
 
 // Error fingerprints that mean the Lightpanda CDP-shaped page can no longer
@@ -24,7 +25,7 @@ export function isSpaCrash(err) {
 }
 
 async function tryLaunchLightpanda(opts) {
-  if (process.platform === 'win32' || !process.env.LIGHTPANDA_CDP_URL) return null;
+  if (process.platform === 'win32' && !process.env.LIGHTPANDA_CDP_URL) return null;
   try {
     return await launchLightpanda(opts);
   } catch (err) {
@@ -44,7 +45,10 @@ async function tryLaunchLightpanda(opts) {
 // reference, so we shadow that array's `push` to fan out into the original
 // backing array — without this, post-fallback events would silently land in a
 // dead array and the surprise pipeline would miss real signal.
-function forwardEventsTo(srcArr, dstArr) {
+// @internal — exported for unit tests only. Must not be called twice on the
+// same srcArr: each call wraps push again, causing each item to be forwarded
+// N times after N calls.
+export function forwardEventsTo(srcArr, dstArr) {
   const origPush = srcArr.push.bind(srcArr);
   srcArr.push = function (...items) {
     for (const it of items) dstArr.push(it);
@@ -52,8 +56,12 @@ function forwardEventsTo(srcArr, dstArr) {
   };
 }
 
-export async function createBrowser({ preferLightpanda = true, headful = false } = {}) {
-  const launchOpts = { headful };
+export async function createBrowser({ engine = 'playwright', preferLightpanda = true, headful = false, userDataDir, storageState, roles } = {}) {
+  if (engine === 'playwright') {
+    return launchPlaywright({ headful, userDataDir, storageState, roles });
+  }
+
+  const launchOpts = { headful, ...(userDataDir ? { userDataDir } : {}) };
   let active = preferLightpanda ? await tryLaunchLightpanda(launchOpts) : null;
   if (!active) active = await launchPuppeteer(launchOpts);
 
@@ -61,7 +69,7 @@ export async function createBrowser({ preferLightpanda = true, headful = false }
 
   let fellBack = false;
 
-  async function fallbackToPuppeteer(reason, pageRef, eventsBacking) {
+  async function fallbackToPuppeteer(reason, pageRef, eventsBacking, capturesBacking) {
     if (fellBack) return false;
     fellBack = true;
     console.warn(`[browser] lightpanda SPA fallback -> puppeteer (reason=${reason})`);
@@ -70,6 +78,7 @@ export async function createBrowser({ preferLightpanda = true, headful = false }
     const fresh = await active.newPage();
     pageRef.current = fresh.raw;
     forwardEventsTo(fresh.events, eventsBacking);
+    forwardEventsTo(fresh.captures, capturesBacking);
     if (pageRef.lastUrl && pageRef.lastUrl !== 'about:blank') {
       await fresh.raw
         .goto(pageRef.lastUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })
@@ -82,10 +91,11 @@ export async function createBrowser({ preferLightpanda = true, headful = false }
   return {
     kind: 'lightpanda+fallback',
     raw: active.raw,
-    async newPage() {
-      const p = await active.newPage();
+    async newPage(role = 'user') {
+      const p = await active.newPage(role);
       const pageRef = { current: p.raw, lastUrl: '' };
       const eventsBacking = p.events;
+      const capturesBacking = p.captures ?? [];
 
       const rawProxy = new Proxy(
         {},
@@ -117,6 +127,7 @@ export async function createBrowser({ preferLightpanda = true, headful = false }
                       `${String(prop)}:${err.message}`,
                       pageRef,
                       eventsBacking,
+                      capturesBacking,
                     ))
                   )
                     throw err;
@@ -136,6 +147,7 @@ export async function createBrowser({ preferLightpanda = true, headful = false }
                         `${String(prop)}:${err.message}`,
                         pageRef,
                         eventsBacking,
+                        capturesBacking,
                       ))
                     )
                       throw err;
@@ -150,7 +162,7 @@ export async function createBrowser({ preferLightpanda = true, headful = false }
         },
       );
 
-      return { raw: rawProxy, events: eventsBacking };
+      return { raw: rawProxy, events: eventsBacking, captures: capturesBacking };
     },
     async close() {
       await active.close();

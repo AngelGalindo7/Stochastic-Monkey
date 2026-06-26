@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { pruneLayout, listInteractiveNodes } from '../../src/perception/a11yTree.js';
+import { describe, it, expect, vi } from 'vitest';
+import { pruneLayout, listInteractiveNodes, getFileInputs } from '../../src/perception/a11yTree.js';
 
 describe('a11yTree.pruneLayout', () => {
   it('drops layout-only nodes with no children', () => {
@@ -55,5 +55,81 @@ describe('a11yTree.listInteractiveNodes', () => {
     const nodes = listInteractiveNodes(tree);
     const names = nodes.map((n) => n.name);
     expect(names).toEqual(['A', 'B', 'C']);
+  });
+
+  it('finds interactive nodes nested two levels deep', () => {
+    const tree = {
+      role: 'main',
+      children: [
+        {
+          role: 'group',
+          children: [
+            { role: 'generic', children: [{ role: 'button', name: 'Deep' }] },
+          ],
+        },
+      ],
+    };
+    const nodes = listInteractiveNodes(tree);
+    expect(nodes.map((n) => n.name)).toContain('Deep');
+  });
+});
+
+// Regression: getFileInputs must operate on the RAW page (page.$$eval) — the
+// same shape index.js passes as getFileInputs(page.raw). A merge once kept a
+// page.raw.$$eval variant that crashed every run on step 0; the mock mirrors the
+// real call site so that contract cannot silently break again.
+describe('a11yTree.getFileInputs', () => {
+  function fakePage(els) {
+    return { $$eval: vi.fn(async (_sel, fn) => fn(els)) };
+  }
+
+  it('returns descriptors for named file inputs', async () => {
+    const page = fakePage([{ name: 'avatar', id: '', accept: 'image/*' }]);
+    const inputs = await getFileInputs(page);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0].name).toBe('avatar');
+    expect(inputs[0].accept).toBe('image/*');
+    expect(inputs[0].selector).toContain('avatar');
+  });
+
+  it('falls back to id selector when name is absent', async () => {
+    const page = fakePage([{ name: '', id: 'doc-upload', accept: '.pdf' }]);
+    const inputs = await getFileInputs(page);
+    expect(inputs[0].name).toBe('doc-upload');
+    expect(inputs[0].selector).toMatch(/^#/);
+  });
+
+  it('uses accept=* when attribute is empty', async () => {
+    const page = fakePage([{ name: 'f', id: '', accept: '' }]);
+    const inputs = await getFileInputs(page);
+    expect(inputs[0].accept).toBe('*');
+  });
+
+  it('returns empty array when no file inputs exist', async () => {
+    const page = fakePage([]);
+    const inputs = await getFileInputs(page);
+    expect(inputs).toEqual([]);
+  });
+
+  it('queries input[type="file"] selector', async () => {
+    const page = fakePage([]);
+    await getFileInputs(page);
+    expect(page.$$eval).toHaveBeenCalledWith('input[type="file"]', expect.any(Function));
+  });
+
+  it('returns empty for a Lightpanda page (no upload surface)', async () => {
+    expect(await getFileInputs({ _isLightpanda: true })).toEqual([]);
+  });
+
+  it('uses nth-of-type selector and exposes index when name and id are absent', async () => {
+    const page = fakePage([
+      { name: '', id: '', accept: '' },
+      { name: '', id: '', accept: 'image/*' },
+    ]);
+    const inputs = await getFileInputs(page);
+    expect(inputs[0].index).toBe(0);
+    expect(inputs[0].selector).toMatch(/nth-of-type\(1\)/);
+    expect(inputs[1].index).toBe(1);
+    expect(inputs[1].selector).toMatch(/nth-of-type\(2\)/);
   });
 });
