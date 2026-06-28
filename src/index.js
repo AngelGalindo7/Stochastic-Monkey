@@ -133,6 +133,39 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// Parses a raw Set-Cookie header string into a Playwright/Puppeteer setCookie
+// object. Server attributes (HttpOnly, Secure, SameSite, Path, Domain) take
+// priority when merged with the config template — prevents the template's stale
+// flags from overriding what the server actually issued.
+function parseSetCookie(header) {
+  const parts = header.split(';');
+  const eq = parts[0].indexOf('=');
+  if (eq < 0) return null;
+  const attrs = {
+    name: parts[0].slice(0, eq).trim(),
+    value: parts[0].slice(eq + 1).trim(),
+  };
+  for (let i = 1; i < parts.length; i++) {
+    const t = parts[i].trim();
+    const tl = t.toLowerCase();
+    if (tl === 'httponly') { attrs.httpOnly = true; }
+    else if (tl === 'secure') { attrs.secure = true; }
+    else if (tl.startsWith('samesite=')) {
+      const v = t.slice('samesite='.length).trim();
+      attrs.sameSite = v.charAt(0).toUpperCase() + v.slice(1).toLowerCase();
+    } else if (tl.startsWith('path=')) { attrs.path = t.slice('path='.length).trim(); }
+    else if (tl.startsWith('domain=')) { attrs.domain = t.slice('domain='.length).trim(); }
+    else if (tl.startsWith('max-age=')) {
+      const age = parseInt(t.slice('max-age='.length), 10);
+      if (!isNaN(age)) attrs.expires = Math.floor(Date.now() / 1000) + age;
+    } else if (tl.startsWith('expires=')) {
+      const exp = Date.parse(t.slice('expires='.length));
+      if (!isNaN(exp)) attrs.expires = Math.floor(exp / 1000);
+    }
+  }
+  return attrs;
+}
+
 function pickMacro(macros, rng) {
   if (!macros || macros.length === 0) return null;
   const total = macros.reduce((s, m) => s + (m.weight ?? 1), 0);
@@ -188,15 +221,14 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
             throw new Error('login failed; aborting before SPA boot');
           }
           const setCookies = res.headers.getSetCookie?.() ?? [];
-          const rotated = {};
+          const serverCookies = {};
           for (const sc of setCookies) {
-            const [pair] = sc.split(';');
-            const eq = pair.indexOf('=');
-            if (eq > 0) rotated[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+            const parsed = parseSetCookie(sc);
+            if (parsed) serverCookies[parsed.name] = parsed;
           }
           const seeded = configCookies
-            .filter((c) => rotated[c.name] !== undefined)
-            .map((c) => ({ ...c, value: rotated[c.name] }));
+            .filter((c) => serverCookies[c.name] !== undefined)
+            .map((c) => ({ ...c, ...serverCookies[c.name] }));
           if (!seeded.length) {
             throw new Error('login ok but no matching cookies in Set-Cookie response');
           }
@@ -227,15 +259,14 @@ async function runArm({ role, page, seed, config, rng, tracer, breadcrumbs, step
               throw new Error('pre-refresh failed; aborting before SPA boot');
             }
             const setCookies = res.headers.getSetCookie?.() ?? [];
-            const rotated = {};
+            const serverCookies = {};
             for (const sc of setCookies) {
-              const [pair] = sc.split(';');
-              const eq = pair.indexOf('=');
-              if (eq > 0) rotated[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+              const parsed = parseSetCookie(sc);
+              if (parsed) serverCookies[parsed.name] = parsed;
             }
             const updated = configCookies
-              .filter((c) => rotated[c.name] !== undefined)
-              .map((c) => ({ ...c, value: rotated[c.name] }));
+              .filter((c) => serverCookies[c.name] !== undefined)
+              .map((c) => ({ ...c, ...serverCookies[c.name] }));
             if (updated.length) {
               await page.raw.setCookie(...updated);
               breadcrumbs.record('auth', `pre-refresh ok; rotated ${updated.length} cookie(s) in jar`);
